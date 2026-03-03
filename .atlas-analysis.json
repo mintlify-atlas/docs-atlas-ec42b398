@@ -1,0 +1,116 @@
+{
+  "projectType": "framework",
+  "projectName": "NduloJS",
+  "projectDescription": "A TypeScript backend framework that enforces Clean Architecture from day one.",
+  "theme": "aspen",
+  "primaryColor": "#3B82F6",
+  "lightColor": "#60A5FA",
+  "darkColor": "#2563EB",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/result-pattern",
+              "concepts/dependency-injection",
+              "concepts/http-adapter",
+              "concepts/logging"
+            ]
+          },
+          {
+            "group": "CLI",
+            "pages": [
+              "cli/overview",
+              "cli/create",
+              "cli/generate",
+              "cli/add"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/project-structure",
+              "guides/error-handling",
+              "guides/module-development",
+              "guides/testing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Result",
+            "pages": [
+              "api/result/types",
+              "api/result/errors",
+              "api/result/utilities"
+            ]
+          },
+          {
+            "group": "Container",
+            "pages": [
+              "api/container/container",
+              "api/container/scopes"
+            ]
+          },
+          {
+            "group": "HTTP",
+            "pages": [
+              "api/http/adapter",
+              "api/http/routing",
+              "api/http/middleware"
+            ]
+          },
+          {
+            "group": "Logger",
+            "pages": [
+              "api/logger/logger",
+              "api/logger/configuration"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Result pattern for typed error handling",
+    "Functional dependency injection container",
+    "HTTP adapter built on Elysia",
+    "Structured logging with daily rotation",
+    "CLI for scaffolding modules and projects",
+    "Clean Architecture enforcement"
+  ],
+  "publicApiSurface": [
+    "Ok",
+    "Err",
+    "Result",
+    "ErrorFactory",
+    "createContainer",
+    "Container",
+    "createApp",
+    "AppInstance",
+    "IHttpAdapter",
+    "createLogger",
+    "LoggerSuite",
+    "map",
+    "flatMap",
+    "unwrap",
+    "unwrapOr",
+    "combine",
+    "matchError"
+  ]
+}
