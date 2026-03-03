@@ -1,0 +1,463 @@
+---
+title: Utility functions
+description: Helper functions for working with Result types in NduloJS
+---
+
+## map
+
+Transforms the value inside a Success result. If the result is a Failure, it passes through untouched.
+
+```typescript
+function map<T, U, E>(
+  result: Result<T, E>,
+  fn: (value: T) => U
+): Result<U, E>
+```
+
+<ParamField path="result" type="Result<T, E>" required>
+  The result to transform
+</ParamField>
+
+<ParamField path="fn" type="(value: T) => U" required>
+  Transformation function applied to the success value
+</ParamField>
+
+### Usage
+
+<CodeGroup>
+
+```typescript Basic transformation
+const userResult: Result<User, AppError> = await findUser(id);
+const nameResult: Result<string, AppError> = map(userResult, user => user.name);
+```
+
+```typescript Chaining transformations
+const result = map(
+  map(userResult, user => user.profile),
+  profile => profile.displayName
+);
+```
+
+```typescript Fails gracefully
+const errorResult: Result<User, AppError> = Err(ErrorFactory.notFound('Not found'));
+const mapped = map(errorResult, user => user.name);
+// mapped is still Err - function never runs
+```
+
+</CodeGroup>
+
+## flatMap
+
+Chains operations that return Results. Prevents nested Results like `Result<Result<T, E>, E>`.
+
+```typescript
+function flatMap<T, U, E>(
+  result: Result<T, E>,
+  fn: (value: T) => Result<U, E>
+): Result<U, E>
+```
+
+<ParamField path="result" type="Result<T, E>" required>
+  The result to transform
+</ParamField>
+
+<ParamField path="fn" type="(value: T) => Result<U, E>" required>
+  Function that returns a new Result
+</ParamField>
+
+### Usage
+
+<CodeGroup>
+
+```typescript Sequential operations
+const result = flatMap(
+  await findUser(userId),
+  user => findAccount(user.accountId)
+);
+// Returns Result<Account, AppError> instead of Result<Result<Account, AppError>, AppError>
+```
+
+```typescript Error short-circuiting
+async function getUserPosts(userId: string): Promise<Result<Post[], AppError>> {
+  return flatMap(
+    await findUser(userId),
+    user => findPosts(user.id)
+  );
+}
+// If findUser fails, findPosts never runs
+```
+
+```typescript Multiple operations
+const result = flatMap(
+  flatMap(
+    await authenticate(token),
+    user => checkPermission(user, 'admin')
+  ),
+  () => performAdminAction()
+);
+```
+
+</CodeGroup>
+
+## unwrap
+
+Extracts the value from a Success result. Throws an error if called on a Failure - use only when you are certain the result is Ok.
+
+```typescript
+function unwrap<T, E>(result: Result<T, E>): T
+```
+
+<ParamField path="result" type="Result<T, E>" required>
+  The result to unwrap
+</ParamField>
+
+<Warning>
+  This function throws if the result is a Failure. Only use when you've verified the result is successful, or use `unwrapOr` / `unwrapOrElse` for safe defaults.
+</Warning>
+
+### Usage
+
+<CodeGroup>
+
+```typescript Safe usage
+const result = await findUser(id);
+
+if (result.success) {
+  const user = unwrap(result); // Safe - we checked first
+  console.log(user.name);
+}
+```
+
+```typescript Dangerous usage
+const result = await findUser(id);
+const user = unwrap(result); // ⚠️ Throws if result is Err
+```
+
+```typescript In tests
+test('creates user successfully', async () => {
+  const result = await createUser(validData);
+  const user = unwrap(result); // OK in tests with controlled data
+  expect(user.email).toBe('test@example.com');
+});
+```
+
+</CodeGroup>
+
+## unwrapOr
+
+Returns the value if Success, or a fallback value if Failure.
+
+```typescript
+function unwrapOr<T, E>(result: Result<T, E>, fallback: T): T
+```
+
+<ParamField path="result" type="Result<T, E>" required>
+  The result to unwrap
+</ParamField>
+
+<ParamField path="fallback" type="T" required>
+  Value to return if the result is a Failure
+</ParamField>
+
+### Usage
+
+<CodeGroup>
+
+```typescript Default value
+const userResult = await findUser(id);
+const user = unwrapOr(userResult, defaultUser);
+```
+
+```typescript Empty array fallback
+const postsResult = await fetchPosts(userId);
+const posts = unwrapOr(postsResult, []);
+```
+
+```typescript Primitive fallback
+const countResult = await getCount();
+const count = unwrapOr(countResult, 0);
+```
+
+</CodeGroup>
+
+## unwrapOrElse
+
+Returns the value if Success, or computes a fallback from the error if Failure.
+
+```typescript
+function unwrapOrElse<T, E>(
+  result: Result<T, E>,
+  fn: (error: E) => T
+): T
+```
+
+<ParamField path="result" type="Result<T, E>" required>
+  The result to unwrap
+</ParamField>
+
+<ParamField path="fn" type="(error: E) => T" required>
+  Function that computes a fallback value from the error
+</ParamField>
+
+### Usage
+
+<CodeGroup>
+
+```typescript Error-based fallback
+const userResult = await findUser(id);
+const userName = unwrapOrElse(
+  map(userResult, user => user.name),
+  error => `Error: ${error.message}`
+);
+```
+
+```typescript Logging errors
+const result = await performOperation();
+const value = unwrapOrElse(result, error => {
+  console.error('Operation failed:', error);
+  return defaultValue;
+});
+```
+
+```typescript Different fallbacks per error type
+const data = unwrapOrElse(result, error => {
+  if (error.type === 'NOT_FOUND') return emptyData;
+  if (error.type === 'UNAUTHORIZED') return restrictedData;
+  return defaultData;
+});
+```
+
+</CodeGroup>
+
+## isOk
+
+Type guard that narrows a Result to Success.
+
+```typescript
+function isOk<T, E>(result: Result<T, E>): result is Success<T>
+```
+
+<ParamField path="result" type="Result<T, E>" required>
+  The result to check
+</ParamField>
+
+### Usage
+
+<CodeGroup>
+
+```typescript Type narrowing
+const result = await findUser(id);
+
+if (isOk(result)) {
+  // TypeScript knows result is Success<User>
+  console.log(result.value.name);
+} else {
+  // TypeScript knows result is Failure<AppError>
+  console.log(result.error.message);
+}
+```
+
+```typescript Filter successful results
+const results = await Promise.all([
+  findUser(1),
+  findUser(2),
+  findUser(3)
+]);
+
+const successfulUsers = results
+  .filter(isOk)
+  .map(result => result.value);
+```
+
+```typescript Early return
+const result = await findUser(id);
+
+if (!isOk(result)) {
+  return Err(result.error);
+}
+
+const user = result.value; // TypeScript knows this is User
+```
+
+</CodeGroup>
+
+## isErr
+
+Type guard that narrows a Result to Failure.
+
+```typescript
+function isErr<T, E>(result: Result<T, E>): result is Failure<E>
+```
+
+<ParamField path="result" type="Result<T, E>" required>
+  The result to check
+</ParamField>
+
+### Usage
+
+<CodeGroup>
+
+```typescript Type narrowing
+const result = await performOperation();
+
+if (isErr(result)) {
+  // TypeScript knows result is Failure<AppError>
+  logError(result.error);
+  return;
+}
+
+// TypeScript knows result is Success here
+processValue(result.value);
+```
+
+```typescript Collect errors
+const results = await Promise.all(operations);
+const errors = results
+  .filter(isErr)
+  .map(result => result.error);
+```
+
+```typescript Early error handling
+if (isErr(result)) {
+  return res.status(result.error.statusCode).json(result.error);
+}
+```
+
+</CodeGroup>
+
+## combine
+
+Combines multiple Results into one. Returns the first Failure encountered, or Ok with all values.
+
+```typescript
+function combine<T, E>(results: Result<T, E>[]): Result<T[], E>
+```
+
+<ParamField path="results" type="Result<T, E>[]" required>
+  Array of results to combine
+</ParamField>
+
+### Usage
+
+<CodeGroup>
+
+```typescript Parallel operations
+const results = await Promise.all([
+  findUser(userId),
+  findAccount(accountId),
+  findSettings(settingsId)
+]);
+
+const combined = combine(results);
+
+if (combined.success) {
+  const [user, account, settings] = combined.value;
+  // All three succeeded
+} else {
+  // At least one failed
+  console.error(combined.error);
+}
+```
+
+```typescript Validate multiple fields
+const validations = [
+  validateEmail(data.email),
+  validatePassword(data.password),
+  validateUsername(data.username)
+];
+
+const result = combine(validations);
+// Fails fast on first validation error
+```
+
+```typescript Aggregate data
+const userIds = [1, 2, 3, 4, 5];
+const userResults = await Promise.all(
+  userIds.map(id => findUser(id))
+);
+
+const allUsers = combine(userResults);
+if (allUsers.success) {
+  // Process all users
+  processUsers(allUsers.value);
+}
+```
+
+</CodeGroup>
+
+## matchError
+
+Pattern matches over AppError types. Provides exhaustive type-safe error handling.
+
+```typescript
+function matchError<T>(
+  error: AppError,
+  handlers: ErrorHandlerMap<T>
+): T
+
+type ErrorHandlerMap<T> = {
+  [K in AppErrorType]?: (error: Extract<AppError, { type: K }>) => T;
+} & {
+  default: (error: AppError) => T;
+}
+```
+
+<ParamField path="error" type="AppError" required>
+  The error to match against
+</ParamField>
+
+<ParamField path="handlers" type="ErrorHandlerMap<T>" required>
+  Object mapping error types to handler functions. Must include a `default` handler.
+</ParamField>
+
+### Usage
+
+<CodeGroup>
+
+```typescript HTTP response
+const result = await findUser(id);
+
+if (!result.success) {
+  const response = matchError(result.error, {
+    NOT_FOUND: (err) => res.status(404).json({ message: err.message }),
+    UNAUTHORIZED: (err) => res.status(401).json({ message: err.message }),
+    VALIDATION_ERROR: (err) => res.status(422).json({
+      message: err.message,
+      errors: err.errors
+    }),
+    default: (err) => res.status(err.statusCode).json({ message: err.message })
+  });
+  return response;
+}
+```
+
+```typescript User-friendly messages
+const message = matchError(error, {
+  NOT_FOUND: () => 'The item you requested could not be found.',
+  VALIDATION_ERROR: (err) => `Please fix the following: ${err.errors.map(e => e.message).join(', ')}`,
+  UNAUTHORIZED: () => 'Please log in to continue.',
+  FORBIDDEN: () => 'You do not have permission to perform this action.',
+  default: () => 'An unexpected error occurred. Please try again.'
+});
+```
+
+```typescript Logging levels
+matchError(error, {
+  VALIDATION_ERROR: (err) => logger.info('Validation failed', err),
+  NOT_FOUND: (err) => logger.info('Resource not found', err),
+  DATABASE_ERROR: (err) => logger.error('Database error', err),
+  INTERNAL_SERVER_ERROR: (err) => logger.error('Internal error', err),
+  default: (err) => logger.warn('Unhandled error type', err)
+});
+```
+
+```typescript Retry logic
+const shouldRetry = matchError(error, {
+  TOO_MANY_REQUESTS: () => true,
+  EXTERNAL_SERVICE_ERROR: () => true,
+  DATABASE_ERROR: (err) => err.operation === 'SELECT',
+  default: () => false
+});
+```
+
+</CodeGroup>

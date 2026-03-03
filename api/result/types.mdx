@@ -1,0 +1,180 @@
+---
+title: Result types
+description: Core types for type-safe error handling in NduloJS
+---
+
+## Result
+
+The `Result<T, E>` type represents an operation that can either succeed with a value of type `T` or fail with an error of type `E`. It forces explicit error handling without relying on try/catch.
+
+```typescript
+type Result<T, E = unknown> = Success<T> | Failure<E>
+```
+
+<ParamField path="T" type="type parameter">
+  The type of the success value
+</ParamField>
+
+<ParamField path="E" type="type parameter" default="unknown">
+  The type of the error (defaults to `unknown` if not specified)
+</ParamField>
+
+### Basic usage
+
+```typescript
+const result: Result<User, AppError> = await findUser(id);
+
+if (result.success) {
+  console.log(result.value); // User
+} else {
+  console.log(result.error); // AppError
+}
+```
+
+## Success
+
+Represents a successful operation with a value.
+
+```typescript
+type Success<T> = {
+  readonly success: true;
+  readonly value: T;
+}
+```
+
+<ResponseField name="success" type="true" required>
+  Always `true` for successful results
+</ResponseField>
+
+<ResponseField name="value" type="T" required>
+  The successful value returned from the operation
+</ResponseField>
+
+## Failure
+
+Represents a failed operation with an error.
+
+```typescript
+type Failure<E> = {
+  readonly success: false;
+  readonly error: E;
+}
+```
+
+<ResponseField name="success" type="false" required>
+  Always `false` for failed results
+</ResponseField>
+
+<ResponseField name="error" type="E" required>
+  The error that caused the operation to fail
+</ResponseField>
+
+## Ok
+
+Constructor function that creates a `Success` result.
+
+```typescript
+const Ok: <T>(value: T) => Success<T>
+```
+
+<ParamField path="value" type="T" required>
+  The value to wrap in a Success result
+</ParamField>
+
+### Usage
+
+<CodeGroup>
+
+```typescript Simple value
+return Ok(user);
+```
+
+```typescript With type annotation
+const result: Result<User, AppError> = Ok(user);
+```
+
+```typescript In async function
+async function findUser(id: string): Promise<Result<User, AppError>> {
+  const user = await db.users.findById(id);
+  if (!user) {
+    return Err(ErrorFactory.notFound('User not found', 'User', id));
+  }
+  return Ok(user);
+}
+```
+
+</CodeGroup>
+
+## Err
+
+Constructor function that creates a `Failure` result.
+
+```typescript
+const Err: <E>(error: E) => Failure<E>
+```
+
+<ParamField path="error" type="E" required>
+  The error to wrap in a Failure result
+</ParamField>
+
+### Usage
+
+<CodeGroup>
+
+```typescript With ErrorFactory
+return Err(ErrorFactory.notFound('User not found'));
+```
+
+```typescript Custom error
+return Err({ code: 'CUSTOM_ERROR', message: 'Something went wrong' });
+```
+
+```typescript Type-safe AppError
+const result: Result<User, AppError> = Err(
+  ErrorFactory.validation('Invalid email format', [
+    { field: 'email', message: 'Must be a valid email' }
+  ])
+);
+```
+
+</CodeGroup>
+
+## UnwrapResult
+
+Utility type that extracts the value type `T` from a `Result<T, E>`.
+
+```typescript
+type UnwrapResult<T> = T extends Result<infer U, any> ? U : never
+```
+
+### Usage
+
+```typescript
+type UserResult = Result<User, AppError>;
+type User = UnwrapResult<UserResult>; // extracts User type
+
+// Useful for inferring return types
+function processResult<T extends Result<any, any>>(
+  result: T
+): UnwrapResult<T> | null {
+  return result.success ? result.value : null;
+}
+```
+
+## Type narrowing
+
+TypeScript automatically narrows the Result type based on the `success` property:
+
+```typescript
+const result: Result<User, AppError> = await findUser(id);
+
+if (result.success) {
+  // TypeScript knows this is Success<User>
+  console.log(result.value.name); // ✓ value is accessible
+  // console.log(result.error); // ✗ error doesn't exist
+} else {
+  // TypeScript knows this is Failure<AppError>
+  console.log(result.error.message); // ✓ error is accessible
+  // console.log(result.value); // ✗ value doesn't exist
+}
+```

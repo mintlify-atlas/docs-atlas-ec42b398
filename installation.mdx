@@ -1,0 +1,254 @@
+---
+title: Installation
+description: Install NduloJS and set up your development environment
+---
+
+# Installation
+
+Get started with NduloJS in seconds. Choose between creating a new project from scratch or adding NduloJS to an existing application.
+
+## System requirements
+
+Before you begin, ensure you have:
+
+- **Node.js** 18.x or later (or Bun 1.0+)
+- **TypeScript** 5.5 or later
+- A package manager: npm, yarn, pnpm, or bun
+
+<Note>
+  NduloJS is built on [Elysia](https://elysiajs.com) and works best with Bun, but supports Node.js runtimes as well.
+</Note>
+
+## Create a new project
+
+The fastest way to get started is using the NduloJS CLI to scaffold a new project:
+
+<CodeGroup>
+
+```bash npm
+npx ndulojs create my-app
+cd my-app
+npm install
+npm run dev
+```
+
+```bash yarn
+npx ndulojs create my-app
+cd my-app
+yarn install
+yarn dev
+```
+
+```bash pnpm
+pnpm dlx ndulojs create my-app
+cd my-app
+pnpm install
+pnpm dev
+```
+
+```bash bun
+bunx ndulojs create my-app
+cd my-app
+bun install
+bun dev
+```
+
+</CodeGroup>
+
+This creates a complete NduloJS application with:
+
+- Clean Architecture folder structure
+- Sample user module with authentication
+- Dependency injection container configured
+- Result pattern examples
+- Development scripts ready to use
+
+<Tip>
+  The generated project includes a complete user authentication example to help you understand NduloJS patterns.
+</Tip>
+
+## Add to existing project
+
+To add NduloJS to an existing TypeScript project:
+
+<Steps>
+
+<Step title="Install the core package">
+
+<CodeGroup>
+
+```bash npm
+npm install ndulojs elysia
+```
+
+```bash yarn
+yarn add ndulojs elysia
+```
+
+```bash pnpm
+pnpm add ndulojs elysia
+```
+
+```bash bun
+bun add ndulojs elysia
+```
+
+</CodeGroup>
+
+<Note>
+  NduloJS requires Elysia as a peer dependency. Make sure to install both packages.
+</Note>
+
+</Step>
+
+<Step title="Install the CLI (optional)">
+
+The CLI helps you scaffold modules and maintain Clean Architecture structure:
+
+<CodeGroup>
+
+```bash npm
+npm install -D ndulojs-cli
+```
+
+```bash yarn
+yarn add -D ndulojs-cli
+```
+
+```bash pnpm
+pnpm add -D ndulojs-cli
+```
+
+```bash bun
+bun add -D ndulojs-cli
+```
+
+</CodeGroup>
+
+</Step>
+
+<Step title="Configure TypeScript">
+
+Update your `tsconfig.json` to ensure proper module resolution:
+
+```json tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "declaration": true,
+    "declarationMap": true,
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+</Step>
+
+</Steps>
+
+## Package versions
+
+NduloJS follows semantic versioning. Current stable versions:
+
+| Package | Version | Description |
+|---------|---------|-------------|
+| `ndulojs` | 1.0.2 | Core framework |
+| `ndulojs-cli` | 1.0.5 | CLI scaffolding tool |
+
+<Warning>
+  Make sure to use compatible versions. The CLI version should be equal to or higher than the core package version.
+</Warning>
+
+## Verify installation
+
+Create a simple test file to verify everything is working:
+
+```typescript src/test.ts
+import { createApp, Ok } from 'ndulojs';
+
+const app = await createApp({ port: 3000 });
+
+app.get('/health', () => Ok({ status: 'ok' }));
+
+app.listen(3000);
+console.log('Server running on http://localhost:3000');
+```
+
+Run it:
+
+<CodeGroup>
+
+```bash bun
+bun run src/test.ts
+```
+
+```bash node
+tsx src/test.ts
+```
+
+</CodeGroup>
+
+Visit `http://localhost:3000/health` — you should see:
+
+```json
+{
+  "status": "ok"
+}
+```
+
+<Tip>
+  If you're using Node.js, install `tsx` for running TypeScript files directly: `npm install -D tsx`
+</Tip>
+
+## Next steps
+
+Now that you have NduloJS installed, let's build your first API endpoint:
+
+<Card title="Quickstart guide" icon="rocket" href="/quickstart">
+  Build a complete API endpoint with the Result pattern and dependency injection
+</Card>
+
+Or explore the core concepts:
+
+<CardGroup cols={2}>
+  <Card title="Result pattern" icon="check-circle" href="/concepts/result-pattern">
+    Learn how to handle errors with typed Results
+  </Card>
+  
+  <Card title="Dependency injection" icon="box" href="/concepts/dependency-injection">
+    Master the functional DI container
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Module not found errors
+
+If you see module resolution errors, ensure:
+
+1. Your `tsconfig.json` has `"moduleResolution": "bundler"` or `"node16"`
+2. You're using `.js` extensions in imports (TypeScript requires this for ESM)
+3. Your `package.json` has `"type": "module"`
+
+### Elysia peer dependency warnings
+
+NduloJS requires Elysia >=1.1.0. Install it alongside NduloJS:
+
+```bash
+bun add elysia ndulojs
+```
+
+### Type errors with the container
+
+Make sure you're using TypeScript 5.5 or later. Earlier versions may have issues with the type inference used in the DI container.

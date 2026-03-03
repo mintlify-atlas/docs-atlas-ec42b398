@@ -1,0 +1,436 @@
+---
+title: 'Route registration'
+description: 'Register HTTP routes and organize them with route groups'
+---
+
+## Overview
+
+NduloJS provides a fluent API for registering HTTP routes. All route methods return `this`, allowing method chaining.
+
+```typescript
+app
+  .get('/users', listUsers)
+  .post('/users', createUser)
+  .get('/users/:id', getUser);
+```
+
+---
+
+## Route methods
+
+### get()
+
+Register a GET route.
+
+```typescript
+get(path: string, handler: Handler, meta?: RouteMeta): this
+```
+
+<ParamField path="path" type="string" required>
+  URL path pattern. Supports route parameters with `:param` syntax.
+</ParamField>
+
+<ParamField path="handler" type="Handler" required>
+  Route handler function. See [Handler type](#handler-type).
+</ParamField>
+
+<ParamField path="meta" type="RouteMeta">
+  Optional metadata for OpenAPI documentation.
+  
+  <ParamField path="meta.tags" type="string[]">
+    OpenAPI tags for grouping endpoints
+  </ParamField>
+  
+  <ParamField path="meta.summary" type="string">
+    Short description for OpenAPI
+  </ParamField>
+  
+  <ParamField path="meta.description" type="string">
+    Detailed description for OpenAPI
+  </ParamField>
+</ParamField>
+
+#### Example
+
+```typescript
+app.get('/users', async () => {
+  return Ok({ users: [] });
+});
+
+// With route parameters
+app.get('/users/:id', async ({ params }) => {
+  const userId = params.id;
+  return Ok({ id: userId });
+});
+
+// With OpenAPI metadata
+app.get('/users/:id', async ({ params }) => {
+  return Ok({ id: params.id });
+}, {
+  tags: ['Users'],
+  summary: 'Get user by ID',
+  description: 'Retrieves a single user by their unique identifier'
+});
+```
+
+---
+
+### post()
+
+Register a POST route.
+
+```typescript
+post(path: string, handler: Handler, meta?: RouteMeta): this
+```
+
+Parameters are identical to `get()`. The handler receives request body via `ctx.body`.
+
+#### Example
+
+```typescript
+app.post('/users', async ({ body }) => {
+  const { email, password, name } = body as {
+    email: string;
+    password: string;
+    name: string;
+  };
+  
+  // Validation
+  if (!email || !password) {
+    return Err(ErrorFactory.validation([
+      { field: 'email', message: 'Email is required' }
+    ]));
+  }
+  
+  return Ok({ id: '123', email, name });
+});
+```
+
+---
+
+### put()
+
+Register a PUT route for full resource updates.
+
+```typescript
+put(path: string, handler: Handler, meta?: RouteMeta): this
+```
+
+#### Example
+
+```typescript
+app.put('/users/:id', async ({ params, body }) => {
+  const userId = params.id;
+  const updates = body as { name: string; email: string };
+  
+  return Ok({ id: userId, ...updates });
+});
+```
+
+---
+
+### patch()
+
+Register a PATCH route for partial resource updates.
+
+```typescript
+patch(path: string, handler: Handler, meta?: RouteMeta): this
+```
+
+#### Example
+
+```typescript
+app.patch('/users/:id', async ({ params, body }) => {
+  const userId = params.id;
+  const partialUpdates = body as Partial<{ name: string; email: string }>;
+  
+  return Ok({ id: userId, updated: true });
+});
+```
+
+---
+
+### delete()
+
+Register a DELETE route.
+
+```typescript
+delete(path: string, handler: Handler, meta?: RouteMeta): this
+```
+
+#### Example
+
+```typescript
+app.delete('/users/:id', async ({ params }) => {
+  const userId = params.id;
+  
+  // Delete logic here
+  
+  return Ok({ deleted: true, id: userId });
+});
+```
+
+---
+
+## group()
+
+Group routes under a common prefix. Useful for organizing related endpoints and applying middleware to specific route groups.
+
+```typescript
+group(prefix: string, fn: (app: this) => void): this
+```
+
+<ParamField path="prefix" type="string" required>
+  URL prefix for all routes in the group. Leading slash is optional.
+</ParamField>
+
+<ParamField path="fn" type="(app: IHttpAdapter) => void" required>
+  Callback function that receives a scoped adapter. Register routes on this scoped instance.
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Basic grouping
+app.group('/users', (r) => {
+  r.get('/', listUsers);          // GET /users
+  r.post('/', createUser);        // POST /users
+  r.get('/:id', getUser);         // GET /users/:id
+  r.put('/:id', updateUser);      // PUT /users/:id
+  r.delete('/:id', deleteUser);   // DELETE /users/:id
+});
+```
+
+```typescript Nested groups
+app.group('/api', (api) => {
+  api.group('/v1', (v1) => {
+    v1.group('/users', (users) => {
+      users.get('/', listUsers);      // GET /api/v1/users
+      users.post('/', createUser);    // POST /api/v1/users
+    });
+    
+    v1.group('/posts', (posts) => {
+      posts.get('/', listPosts);      // GET /api/v1/posts
+      posts.post('/', createPost);    // POST /api/v1/posts
+    });
+  });
+});
+```
+
+```typescript Real-world example
+app.group('/users', (r) => {
+  r.post('/register', async ({ body }) => {
+    const { email, password, name } = body as {
+      email: string;
+      password: string;
+      name: string;
+    };
+    return service.register({ email, password, name });
+  });
+
+  r.post('/login', async ({ body }) => {
+    const { email, password } = body as {
+      email: string;
+      password: string;
+    };
+    return service.login({ email, password });
+  });
+
+  r.get('/me', async ({ headers }) => {
+    const token = headers['authorization']?.replace('Bearer ', '');
+    if (!token) {
+      return Err(ErrorFactory.unauthorized('Missing token', 'missing_token'));
+    }
+    
+    const userId = verifyToken(token);
+    if (!userId) {
+      return Err(ErrorFactory.unauthorized('Invalid token', 'invalid_token'));
+    }
+    
+    return service.me(userId);
+  });
+});
+```
+
+</CodeGroup>
+
+---
+
+## Handler type
+
+All route handlers follow the same signature:
+
+```typescript
+type Handler<T = unknown> = (
+  ctx: RequestContext
+) => Promise<Result<T, AppError> | T> | Result<T, AppError> | T;
+```
+
+Handlers can return:
+- A `Result<T, AppError>` for automatic error handling
+- A raw value `T` for simple responses
+- A `Promise` resolving to either of the above
+
+<Note>
+  When returning a `Result`, NduloJS automatically:
+  - Maps error types to HTTP status codes
+  - Formats error responses consistently
+  - Logs errors at appropriate levels
+  - Returns 200 OK for successful results
+</Note>
+
+---
+
+## RequestContext
+
+Every handler receives a `RequestContext` object with normalized request data:
+
+```typescript
+type RequestContext = {
+  readonly request: Request;
+  readonly params: Record<string, string>;
+  readonly query: Record<string, string>;
+  readonly body: unknown;
+  readonly headers: Record<string, string>;
+  readonly path: string;
+  readonly method: HttpMethod;
+}
+```
+
+### Properties
+
+<ResponseField name="request" type="Request">
+  Native Web API Request object
+</ResponseField>
+
+<ResponseField name="params" type="Record<string, string>">
+  Route parameters extracted from the URL path.
+  
+  Example: For route `/users/:id` and URL `/users/123`, `params.id === "123"`
+</ResponseField>
+
+<ResponseField name="query" type="Record<string, string>">
+  Query string parameters parsed from the URL.
+  
+  Example: For URL `/users?page=2&limit=10`, `query.page === "2"` and `query.limit === "10"`
+</ResponseField>
+
+<ResponseField name="body" type="unknown">
+  Request body, automatically parsed based on Content-Type.
+  
+  JSON bodies are parsed into objects/arrays. Cast to your expected type:
+  
+  ```typescript
+  const data = body as { email: string; password: string };
+  ```
+</ResponseField>
+
+<ResponseField name="headers" type="Record<string, string>">
+  Request headers as a plain object. Header names are lowercase.
+  
+  ```typescript
+  const auth = headers['authorization'];
+  const contentType = headers['content-type'];
+  ```
+</ResponseField>
+
+<ResponseField name="path" type="string">
+  The request path (pathname only, without query string).
+  
+  Example: `/users/123`
+</ResponseField>
+
+<ResponseField name="method" type="HttpMethod">
+  HTTP method: `'GET'`, `'POST'`, `'PUT'`, `'PATCH'`, or `'DELETE'`
+</ResponseField>
+
+---
+
+## Route patterns
+
+### Path parameters
+
+Extract dynamic segments from the URL:
+
+```typescript
+app.get('/users/:id', async ({ params }) => {
+  const userId = params.id;
+  return Ok({ userId });
+});
+
+app.get('/posts/:postId/comments/:commentId', async ({ params }) => {
+  return Ok({
+    postId: params.postId,
+    commentId: params.commentId
+  });
+});
+```
+
+### Query parameters
+
+Access query string values:
+
+```typescript
+app.get('/users', async ({ query }) => {
+  const page = parseInt(query.page || '1', 10);
+  const limit = parseInt(query.limit || '10', 10);
+  const search = query.search;
+  
+  return Ok({ page, limit, search });
+});
+
+// GET /users?page=2&limit=20&search=john
+```
+
+### Request headers
+
+Access request headers:
+
+```typescript
+app.get('/protected', async ({ headers }) => {
+  const auth = headers['authorization'];
+  const apiKey = headers['x-api-key'];
+  
+  if (!auth && !apiKey) {
+    return Err(ErrorFactory.unauthorized('Authentication required'));
+  }
+  
+  return Ok({ authenticated: true });
+});
+```
+
+---
+
+## Type definitions
+
+### HttpMethod
+
+```typescript
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS';
+```
+
+### RouteMeta
+
+```typescript
+type RouteMeta = {
+  readonly tags?: string[];
+  readonly summary?: string;
+  readonly description?: string;
+}
+```
+
+### RouteDefinition
+
+Complete route definition including metadata:
+
+```typescript
+type RouteDefinition = {
+  readonly method: HttpMethod;
+  readonly path: string;
+  readonly handler: Handler;
+  readonly tags?: string[];
+  readonly summary?: string;
+  readonly description?: string;
+}
+```

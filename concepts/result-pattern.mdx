@@ -1,0 +1,536 @@
+---
+title: Result pattern
+description: Type-safe error handling using the Result monad — no try/catch, no unhandled exceptions
+---
+
+NduloJS uses the Result pattern to make error handling explicit and type-safe. Every operation that can fail returns a `Result<T, E>` — either a success with a value or a failure with an error.
+
+## Why Result?
+
+Traditional error handling with try/catch has problems:
+
+- **Invisible errors** — you can't tell if a function throws just by looking at its signature
+- **Untyped errors** — catch blocks receive `unknown`, forcing type assertions
+- **Easy to forget** — nothing forces you to handle errors
+
+The Result pattern fixes all of this:
+
+```typescript
+// ❌ Traditional approach
+async function getUser(id: string): Promise<User> {
+  // Can this throw? Who knows!
+  const user = await db.findById(id);
+  if (!user) throw new Error('Not found'); // Untyped error
+  return user;
+}
+
+// ✅ Result pattern
+async function getUser(id: string): Promise<Result<User, AppError>> {
+  // Explicit: this can fail, and errors are typed as AppError
+  const user = await db.findById(id);
+  if (!user) return Err(ErrorFactory.notFound('User not found', 'User', id));
+  return Ok(user);
+}
+```
+
+<Info>
+The Result pattern is similar to Rust's `Result<T, E>`, Go's `(value, error)` tuples, and Kotlin's `Result`.
+</Info>
+
+## Core types
+
+### Result type
+
+A Result is a discriminated union of Success and Failure:
+
+```typescript packages/core/src/result/types.ts
+export type Success<T> = {
+  readonly success: true;
+  readonly value: T;
+};
+
+export type Failure<E> = {
+  readonly success: false;
+  readonly error: E;
+};
+
+export type Result<T, E = unknown> = Success<T> | Failure<E>;
+```
+
+### Ok() and Err()
+
+Construct Results using these factory functions:
+
+```typescript packages/core/src/result/types.ts
+export const Ok = <T>(value: T): Success<T> => ({
+  success: true,
+  value,
+});
+
+export const Err = <E>(error: E): Failure<E> => ({
+  success: false,
+  error,
+});
+```
+
+<CodeGroup>
+```typescript Example usage
+import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+import type { Result, AppError } from '@ndulojs/core';
+
+type User = { id: string; name: string; email: string };
+
+async function findUser(id: string): Promise<Result<User, AppError>> {
+  const user = await db.query.users.findFirst({
+    where: (users, { eq }) => eq(users.id, id),
+  });
+
+  if (!user) {
+    return Err(ErrorFactory.notFound('User not found', 'User', id));
+  }
+
+  return Ok(user);
+}
+```
+
+```typescript Type inference
+// TypeScript infers the types correctly
+const result = await findUser('123');
+// result: Result<User, AppError>
+
+if (result.success) {
+  console.log(result.value); // value: User
+} else {
+  console.log(result.error); // error: AppError
+}
+```
+</CodeGroup>
+
+## AppError types
+
+NduloJS provides a discriminated union of all application errors:
+
+```typescript packages/core/src/result/errors.ts
+export type AppError =
+  | ValidationError      // 422 — Input validation failed
+  | NotFoundError        // 404 — Resource not found
+  | UnauthorizedError    // 401 — Not authenticated
+  | ForbiddenError       // 403 — Not authorized
+  | ConflictError        // 409 — Resource conflict (e.g. duplicate email)
+  | BusinessError        // 400 — Business rule violation
+  | DatabaseError        // 500 — Database operation failed
+  | ExternalServiceError // 502 — External API failed
+  | InternalServerError  // 500 — Unexpected internal error
+  | TooManyRequestsError // 429 — Rate limit exceeded
+```
+
+Each error type has a specific structure:
+
+<Tabs>
+  <Tab title="ValidationError">
+```typescript packages/core/src/result/errors.ts
+export type ValidationError = BaseAppError & {
+  readonly type: 'VALIDATION_ERROR';
+  readonly errors: ValidationFieldError[];
+};
+
+export type ValidationFieldError = {
+  readonly field: string;
+  readonly message: string;
+  readonly rule?: string;
+  readonly value?: unknown;
+};
+```
+
+Use for input validation failures:
+
+```typescript
+return Err(ErrorFactory.validation('Invalid user data', [
+  { field: 'email', message: 'Invalid email format', rule: 'email' },
+  { field: 'password', message: 'Password too short', rule: 'min', value: 6 },
+]));
+```
+  </Tab>
+
+  <Tab title="NotFoundError">
+```typescript packages/core/src/result/errors.ts
+export type NotFoundError = BaseAppError & {
+  readonly type: 'NOT_FOUND';
+  readonly resource?: string | undefined;
+  readonly resourceId?: string | number | undefined;
+};
+```
+
+Use when a requested resource doesn't exist:
+
+```typescript
+return Err(ErrorFactory.notFound('User not found', 'User', userId));
+```
+  </Tab>
+
+  <Tab title="UnauthorizedError">
+```typescript packages/core/src/result/errors.ts
+export type UnauthorizedError = BaseAppError & {
+  readonly type: 'UNAUTHORIZED';
+  readonly reason?: 'invalid_token' | 'expired_token' | 'missing_token' 
+    | 'invalid_credentials' | 'missing_credentials' | undefined;
+};
+```
+
+Use for authentication failures:
+
+```typescript
+return Err(ErrorFactory.unauthorized('Invalid token', 'expired_token'));
+```
+  </Tab>
+
+  <Tab title="ConflictError">
+```typescript packages/core/src/result/errors.ts
+export type ConflictError = BaseAppError & {
+  readonly type: 'CONFLICT';
+  readonly conflictingField?: string | undefined;
+  readonly existingValue?: unknown;
+};
+```
+
+Use when a unique constraint is violated:
+
+```typescript
+return Err(ErrorFactory.conflict('Email already in use', 'email', existingEmail));
+```
+  </Tab>
+
+  <Tab title="DatabaseError">
+```typescript packages/core/src/result/errors.ts
+export type DatabaseError = BaseAppError & {
+  readonly type: 'DATABASE_ERROR';
+  readonly operation?: 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE' | 'TRANSACTION' | undefined;
+  readonly table?: string | undefined;
+  readonly cause?: unknown;
+};
+```
+
+Use when database operations fail:
+
+```typescript
+try {
+  const user = await db.insert(users).values(data).returning();
+  return Ok(user);
+} catch (error) {
+  return Err(ErrorFactory.database('Failed to create user', error, 'INSERT', 'users'));
+}
+```
+  </Tab>
+</Tabs>
+
+## ErrorFactory
+
+Create errors using the ErrorFactory — never construct errors manually:
+
+```typescript packages/core/src/result/factory.ts
+export const ErrorFactory = {
+  validation: (message, errors, component?) => ValidationError,
+  notFound: (message, resource?, resourceId?, component?) => NotFoundError,
+  unauthorized: (message, reason?, component?) => UnauthorizedError,
+  forbidden: (message, requiredPermission?, component?) => ForbiddenError,
+  conflict: (message, conflictingField?, existingValue?, component?) => ConflictError,
+  business: (message, code?, component?) => BusinessError,
+  database: (message, cause?, operation?, table?, component?) => DatabaseError,
+  externalService: (message, service, cause?, operation?, component?) => ExternalServiceError,
+  internal: (message, cause?, component?) => InternalServerError,
+  tooManyRequests: (message, retryAfter, component?) => TooManyRequestsError,
+};
+```
+
+<CodeGroup>
+```typescript Service example
+import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+
+export const createOrderService = (repo: IOrderRepository) => ({
+  async createOrder(data: CreateOrderDto): Promise<Result<Order, AppError>> {
+    // Business rule validation
+    if (data.items.length === 0) {
+      return Err(ErrorFactory.business('Order must have at least one item', 'EMPTY_ORDER'));
+    }
+
+    // Check inventory
+    const stockCheck = await repo.checkStock(data.items);
+    if (!stockCheck.success) return stockCheck;
+
+    if (!stockCheck.value.available) {
+      return Err(ErrorFactory.business('Insufficient stock', 'INSUFFICIENT_STOCK'));
+    }
+
+    // Create order
+    return repo.create(data);
+  },
+});
+```
+
+```typescript Repository example
+import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+
+export const createOrderRepository = (db: Database): IOrderRepository => ({
+  async create(data) {
+    try {
+      const [order] = await db.insert(orders).values(data).returning();
+      return Ok(order);
+    } catch (error) {
+      return Err(ErrorFactory.database('Failed to create order', error, 'INSERT', 'orders'));
+    }
+  },
+
+  async findById(id) {
+    try {
+      const order = await db.query.orders.findFirst({
+        where: (orders, { eq }) => eq(orders.id, id),
+      });
+      
+      if (!order) {
+        return Err(ErrorFactory.notFound('Order not found', 'Order', id));
+      }
+      
+      return Ok(order);
+    } catch (error) {
+      return Err(ErrorFactory.database('Failed to find order', error, 'SELECT', 'orders'));
+    }
+  },
+});
+```
+</CodeGroup>
+
+## Working with Results
+
+### Pattern matching
+
+The simplest way to handle Results:
+
+```typescript
+const result = await userService.getUser(id);
+
+if (result.success) {
+  console.log('User:', result.value);
+} else {
+  console.error('Error:', result.error.message);
+}
+```
+
+### Utility functions
+
+NduloJS provides utilities for common operations:
+
+<Tabs>
+  <Tab title="map">
+Transform the value inside a Success:
+
+```typescript packages/core/src/result/utils.ts
+export const map = <T, U, E>(
+  result: Result<T, E>, 
+  fn: (value: T) => U
+): Result<U, E>
+```
+
+```typescript Example
+import { map } from '@ndulojs/core';
+
+const result = await getUser(id);
+const nameResult = map(result, user => user.name);
+// Result<string, AppError>
+```
+  </Tab>
+
+  <Tab title="flatMap">
+Chain operations that return Results:
+
+```typescript packages/core/src/result/utils.ts
+export const flatMap = <T, U, E>(
+  result: Result<T, E>,
+  fn: (value: T) => Result<U, E>
+): Result<U, E>
+```
+
+```typescript Example
+import { flatMap } from '@ndulojs/core';
+
+const userResult = await getUser(id);
+const ordersResult = flatMap(userResult, user => getOrders(user.id));
+// No nested Result<Result<Order[], E>, E>
+```
+  </Tab>
+
+  <Tab title="unwrap / unwrapOr">
+Extract values with fallbacks:
+
+```typescript packages/core/src/result/utils.ts
+export const unwrap = <T, E>(result: Result<T, E>): T
+export const unwrapOr = <T, E>(result: Result<T, E>, fallback: T): T
+export const unwrapOrElse = <T, E>(result: Result<T, E>, fn: (error: E) => T): T
+```
+
+```typescript Example
+import { unwrap, unwrapOr } from '@ndulojs/core';
+
+const result = await getUser(id);
+
+// Throws if result is Failure
+const user = unwrap(result);
+
+// Returns fallback if result is Failure
+const user = unwrapOr(result, { id: 'guest', name: 'Guest' });
+
+// Computes fallback from error
+const user = unwrapOrElse(result, (error) => {
+  logger.error({ error }, 'Failed to get user');
+  return guestUser;
+});
+```
+  </Tab>
+
+  <Tab title="combine">
+Combine multiple Results:
+
+```typescript packages/core/src/result/utils.ts
+export const combine = <T, E>(results: Result<T, E>[]): Result<T[], E>
+```
+
+```typescript Example
+import { combine } from '@ndulojs/core';
+
+const results = await Promise.all([
+  getUser('1'),
+  getUser('2'),
+  getUser('3'),
+]);
+
+const combined = combine(results);
+// Result<User[], AppError>
+// Returns first Failure or Ok with all values
+```
+  </Tab>
+
+  <Tab title="matchError">
+Pattern match on error types:
+
+```typescript packages/core/src/result/utils.ts
+export const matchError = <T>(
+  error: AppError, 
+  handlers: ErrorHandlerMap<T>
+): T
+```
+
+```typescript Example
+import { matchError } from '@ndulojs/core';
+
+const result = await userService.createUser(data);
+
+if (!result.success) {
+  const message = matchError(result.error, {
+    VALIDATION_ERROR: (err) => `Validation failed: ${err.errors.map(e => e.message).join(', ')}`,
+    CONFLICT: (err) => `${err.conflictingField} already exists`,
+    DATABASE_ERROR: (err) => 'Database error occurred',
+    default: (err) => err.message,
+  });
+  
+  console.error(message);
+}
+```
+  </Tab>
+</Tabs>
+
+## HTTP integration
+
+The HTTP adapter automatically converts Results to HTTP responses:
+
+```typescript
+app.get('/users/:id', async ({ params }) => {
+  // Return a Result directly — no manual status code mapping needed
+  return userService.getUser(params.id);
+});
+```
+
+Error types map to HTTP status codes automatically:
+
+| Error type | Status code |
+|------------|-------------|
+| `ValidationError` | 422 |
+| `NotFoundError` | 404 |
+| `UnauthorizedError` | 401 |
+| `ForbiddenError` | 403 |
+| `ConflictError` | 409 |
+| `BusinessError` | 400 |
+| `DatabaseError` | 500 |
+| `ExternalServiceError` | 502 |
+| `InternalServerError` | 500 |
+| `TooManyRequestsError` | 429 |
+
+<Info>
+See [HTTP Adapter](/concepts/http-adapter) for more details on how Results integrate with HTTP handlers.
+</Info>
+
+## Best practices
+
+<Accordion title="Always use ErrorFactory">
+Never construct errors manually — use ErrorFactory to ensure consistent structure:
+
+```typescript
+// ❌ Don't
+return Err({ type: 'NOT_FOUND', message: 'User not found', statusCode: 404 });
+
+// ✅ Do
+return Err(ErrorFactory.notFound('User not found', 'User', id));
+```
+</Accordion>
+
+<Accordion title="Include component names for debugging">
+Pass component names to help trace errors:
+
+```typescript
+return Err(ErrorFactory.database(
+  'Failed to create user',
+  error,
+  'INSERT',
+  'users',
+  'UserRepository' // component name
+));
+```
+</Accordion>
+
+<Accordion title="Propagate errors up the stack">
+Let errors bubble up — don't catch and re-throw:
+
+```typescript
+// ✅ Good — propagate the error
+async function getUser(id: string): Promise<Result<User, AppError>> {
+  const result = await repo.findById(id);
+  if (!result.success) return result; // Propagate
+  
+  if (result.value === null) {
+    return Err(ErrorFactory.notFound('User not found', 'User', id));
+  }
+  
+  return Ok(result.value);
+}
+```
+</Accordion>
+
+<Accordion title="Use type guards for narrowing">
+TypeScript narrows types inside if blocks:
+
+```typescript
+const result = await getUser(id);
+
+if (result.success) {
+  // TypeScript knows result.value is User
+  console.log(result.value.name);
+} else {
+  // TypeScript knows result.error is AppError
+  console.log(result.error.type);
+}
+```
+</Accordion>
+
+## Related concepts
+
+- [HTTP Adapter](/concepts/http-adapter) — How Results integrate with HTTP handlers
+- [Clean Architecture](/concepts/architecture) — Using Results in layered architecture
+- [Logging](/concepts/logging) — Logging errors with structured context

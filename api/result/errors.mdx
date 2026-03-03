@@ -1,0 +1,615 @@
+---
+title: Error types
+description: Comprehensive error types and factory methods for NduloJS applications
+---
+
+## AppError
+
+Discriminated union of all possible application errors. Use this as the `E` type in `Result<T, AppError>`.
+
+```typescript
+type AppError =
+  | ValidationError
+  | NotFoundError
+  | UnauthorizedError
+  | ForbiddenError
+  | ConflictError
+  | BusinessError
+  | DatabaseError
+  | ExternalServiceError
+  | InternalServerError
+  | TooManyRequestsError
+```
+
+## BaseAppError
+
+Base structure shared by all application errors.
+
+```typescript
+interface BaseAppError {
+  readonly type: string;
+  readonly message: string;
+  readonly statusCode: number;
+  readonly timestamp: string;
+  readonly name?: string;
+  readonly stack?: string;
+  readonly component?: string;
+  readonly metadata?: Record<string, unknown>;
+}
+```
+
+<ResponseField name="type" type="string" required>
+  The error type identifier (e.g., `"VALIDATION_ERROR"`, `"NOT_FOUND"`)
+</ResponseField>
+
+<ResponseField name="message" type="string" required>
+  Human-readable error message
+</ResponseField>
+
+<ResponseField name="statusCode" type="number" required>
+  HTTP status code associated with this error
+</ResponseField>
+
+<ResponseField name="timestamp" type="string" required>
+  ISO 8601 timestamp when the error occurred
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Error class name (e.g., `"ValidationError"`, `"NotFoundError"`)
+</ResponseField>
+
+<ResponseField name="stack" type="string">
+  Stack trace filtered to show user code location
+</ResponseField>
+
+<ResponseField name="component" type="string">
+  The component or module where the error originated
+</ResponseField>
+
+<ResponseField name="metadata" type="Record<string, unknown>">
+  Additional contextual data
+</ResponseField>
+
+## Error types
+
+### ValidationError
+
+HTTP 422 - Input data failed validation.
+
+```typescript
+type ValidationError = BaseAppError & {
+  readonly type: 'VALIDATION_ERROR';
+  readonly errors: ValidationFieldError[];
+}
+
+interface ValidationFieldError {
+  readonly field: string;
+  readonly message: string;
+  readonly rule?: string;
+  readonly value?: unknown;
+}
+```
+
+<ResponseField name="errors" type="ValidationFieldError[]" required>
+  Array of field-level validation errors
+</ResponseField>
+
+### NotFoundError
+
+HTTP 404 - Requested resource does not exist.
+
+```typescript
+type NotFoundError = BaseAppError & {
+  readonly type: 'NOT_FOUND';
+  readonly resource?: string;
+  readonly resourceId?: string | number;
+}
+```
+
+<ResponseField name="resource" type="string">
+  The type of resource that was not found (e.g., `"User"`, `"Product"`)
+</ResponseField>
+
+<ResponseField name="resourceId" type="string | number">
+  The ID of the resource that was not found
+</ResponseField>
+
+### UnauthorizedError
+
+HTTP 401 - Request is not authenticated.
+
+```typescript
+type UnauthorizedError = BaseAppError & {
+  readonly type: 'UNAUTHORIZED';
+  readonly reason?:
+    | 'invalid_token'
+    | 'expired_token'
+    | 'missing_token'
+    | 'invalid_credentials'
+    | 'missing_credentials';
+}
+```
+
+<ResponseField name="reason" type="string">
+  Specific reason for unauthorized access: `invalid_token`, `expired_token`, `missing_token`, `invalid_credentials`, or `missing_credentials`
+</ResponseField>
+
+### ForbiddenError
+
+HTTP 403 - Authenticated but not allowed.
+
+```typescript
+type ForbiddenError = BaseAppError & {
+  readonly type: 'FORBIDDEN';
+  readonly requiredPermission?: string;
+}
+```
+
+<ResponseField name="requiredPermission" type="string">
+  The permission required to access the resource
+</ResponseField>
+
+### ConflictError
+
+HTTP 409 - Resource with conflicting data already exists.
+
+```typescript
+type ConflictError = BaseAppError & {
+  readonly type: 'CONFLICT';
+  readonly conflictingField?: string;
+  readonly existingValue?: unknown;
+}
+```
+
+<ResponseField name="conflictingField" type="string">
+  The field that has a conflicting value
+</ResponseField>
+
+<ResponseField name="existingValue" type="unknown">
+  The existing value that caused the conflict
+</ResponseField>
+
+### BusinessError
+
+HTTP 400 - Business rule violation.
+
+```typescript
+type BusinessError = BaseAppError & {
+  readonly type: 'BUSINESS_ERROR';
+  readonly code?: string;
+}
+```
+
+<ResponseField name="code" type="string">
+  Application-specific error code (e.g., `"INSUFFICIENT_STOCK"`, `"ACCOUNT_SUSPENDED"`)
+</ResponseField>
+
+### DatabaseError
+
+HTTP 500 - Database operation failed.
+
+```typescript
+type DatabaseError = BaseAppError & {
+  readonly type: 'DATABASE_ERROR';
+  readonly operation?: 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE' | 'TRANSACTION';
+  readonly table?: string;
+  readonly cause?: unknown;
+}
+```
+
+<ResponseField name="operation" type="string">
+  The database operation that failed: `SELECT`, `INSERT`, `UPDATE`, `DELETE`, or `TRANSACTION`
+</ResponseField>
+
+<ResponseField name="table" type="string">
+  The database table involved in the failed operation
+</ResponseField>
+
+<ResponseField name="cause" type="unknown">
+  The underlying error that caused the database failure
+</ResponseField>
+
+### ExternalServiceError
+
+HTTP 502 - External service failed.
+
+```typescript
+type ExternalServiceError = BaseAppError & {
+  readonly type: 'EXTERNAL_SERVICE_ERROR';
+  readonly service: string;
+  readonly operation?: string;
+  readonly cause?: unknown;
+}
+```
+
+<ResponseField name="service" type="string" required>
+  The name of the external service that failed (e.g., `"stripe"`, `"sendgrid"`)
+</ResponseField>
+
+<ResponseField name="operation" type="string">
+  The operation being performed when the service failed
+</ResponseField>
+
+<ResponseField name="cause" type="unknown">
+  The underlying error from the external service
+</ResponseField>
+
+### InternalServerError
+
+HTTP 500 - Unexpected internal error.
+
+```typescript
+type InternalServerError = BaseAppError & {
+  readonly type: 'INTERNAL_SERVER_ERROR';
+  readonly service?: string;
+  readonly operation?: string;
+  readonly cause?: unknown;
+}
+```
+
+<ResponseField name="service" type="string">
+  The service where the error occurred
+</ResponseField>
+
+<ResponseField name="operation" type="string">
+  The operation being performed when the error occurred
+</ResponseField>
+
+<ResponseField name="cause" type="unknown">
+  The underlying error that caused the failure
+</ResponseField>
+
+### TooManyRequestsError
+
+HTTP 429 - Rate limit exceeded.
+
+```typescript
+type TooManyRequestsError = BaseAppError & {
+  readonly type: 'TOO_MANY_REQUESTS';
+  readonly retryAfter: number;
+}
+```
+
+<ResponseField name="retryAfter" type="number" required>
+  Number of seconds until the client may retry
+</ResponseField>
+
+## ErrorFactory
+
+The only way to create AppErrors in NduloJS. All methods return typed errors ready to be wrapped with `Err()`.
+
+### validation
+
+Creates a validation error (HTTP 422).
+
+```typescript
+validation(
+  message: string,
+  errors?: ValidationFieldError[],
+  component?: string
+): ValidationError
+```
+
+<ParamField path="message" type="string" required>
+  Overall validation error message
+</ParamField>
+
+<ParamField path="errors" type="ValidationFieldError[]" default="[]">
+  Array of field-level validation errors
+</ParamField>
+
+<ParamField path="component" type="string">
+  Component where validation failed
+</ParamField>
+
+<CodeGroup>
+
+```typescript Basic validation error
+return Err(ErrorFactory.validation('Invalid input'));
+```
+
+```typescript With field errors
+return Err(
+  ErrorFactory.validation('Validation failed', [
+    { field: 'email', message: 'Must be a valid email' },
+    { field: 'age', message: 'Must be at least 18', rule: 'min', value: 16 }
+  ])
+);
+```
+
+</CodeGroup>
+
+### notFound
+
+Creates a not found error (HTTP 404).
+
+```typescript
+notFound(
+  message: string,
+  resource?: string,
+  resourceId?: string | number,
+  component?: string
+): NotFoundError
+```
+
+<ParamField path="message" type="string" required>
+  Error message
+</ParamField>
+
+<ParamField path="resource" type="string">
+  Type of resource not found
+</ParamField>
+
+<ParamField path="resourceId" type="string | number">
+  ID of the resource not found
+</ParamField>
+
+<ParamField path="component" type="string">
+  Component where the lookup failed
+</ParamField>
+
+```typescript
+return Err(ErrorFactory.notFound('User not found', 'User', userId));
+```
+
+### unauthorized
+
+Creates an unauthorized error (HTTP 401).
+
+```typescript
+unauthorized(
+  message: string,
+  reason?: 'invalid_token' | 'expired_token' | 'missing_token' | 'invalid_credentials' | 'missing_credentials',
+  component?: string
+): UnauthorizedError
+```
+
+<ParamField path="message" type="string" required>
+  Error message
+</ParamField>
+
+<ParamField path="reason" type="string">
+  Specific reason: `invalid_token`, `expired_token`, `missing_token`, `invalid_credentials`, or `missing_credentials`
+</ParamField>
+
+<ParamField path="component" type="string">
+  Component where authorization failed
+</ParamField>
+
+```typescript
+return Err(ErrorFactory.unauthorized('Token expired', 'expired_token'));
+```
+
+### forbidden
+
+Creates a forbidden error (HTTP 403).
+
+```typescript
+forbidden(
+  message: string,
+  requiredPermission?: string,
+  component?: string
+): ForbiddenError
+```
+
+<ParamField path="message" type="string" required>
+  Error message
+</ParamField>
+
+<ParamField path="requiredPermission" type="string">
+  Permission required to access the resource
+</ParamField>
+
+<ParamField path="component" type="string">
+  Component where access was denied
+</ParamField>
+
+```typescript
+return Err(ErrorFactory.forbidden('Admin access required', 'admin:write'));
+```
+
+### conflict
+
+Creates a conflict error (HTTP 409).
+
+```typescript
+conflict(
+  message: string,
+  conflictingField?: string,
+  existingValue?: unknown,
+  component?: string
+): ConflictError
+```
+
+<ParamField path="message" type="string" required>
+  Error message
+</ParamField>
+
+<ParamField path="conflictingField" type="string">
+  Field with conflicting value
+</ParamField>
+
+<ParamField path="existingValue" type="unknown">
+  The existing value that caused the conflict
+</ParamField>
+
+<ParamField path="component" type="string">
+  Component where the conflict occurred
+</ParamField>
+
+```typescript
+return Err(
+  ErrorFactory.conflict('Email already exists', 'email', existingEmail)
+);
+```
+
+### business
+
+Creates a business logic error (HTTP 400).
+
+```typescript
+business(
+  message: string,
+  code?: string,
+  component?: string
+): BusinessError
+```
+
+<ParamField path="message" type="string" required>
+  Error message
+</ParamField>
+
+<ParamField path="code" type="string">
+  Application-specific error code
+</ParamField>
+
+<ParamField path="component" type="string">
+  Component where the business rule was violated
+</ParamField>
+
+```typescript
+return Err(
+  ErrorFactory.business('Insufficient stock', 'INSUFFICIENT_STOCK')
+);
+```
+
+### database
+
+Creates a database error (HTTP 500).
+
+```typescript
+database(
+  message: string,
+  cause?: unknown,
+  operation?: 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE' | 'TRANSACTION',
+  table?: string,
+  component?: string
+): DatabaseError
+```
+
+<ParamField path="message" type="string" required>
+  Error message
+</ParamField>
+
+<ParamField path="cause" type="unknown">
+  The underlying database error
+</ParamField>
+
+<ParamField path="operation" type="string">
+  Database operation that failed
+</ParamField>
+
+<ParamField path="table" type="string">
+  Table involved in the failed operation
+</ParamField>
+
+<ParamField path="component" type="string">
+  Component where the database error occurred
+</ParamField>
+
+```typescript
+return Err(
+  ErrorFactory.database('Query failed', originalError, 'SELECT', 'users')
+);
+```
+
+### externalService
+
+Creates an external service error (HTTP 502).
+
+```typescript
+externalService(
+  message: string,
+  service: string,
+  cause?: unknown,
+  operation?: string,
+  component?: string
+): ExternalServiceError
+```
+
+<ParamField path="message" type="string" required>
+  Error message
+</ParamField>
+
+<ParamField path="service" type="string" required>
+  Name of the external service
+</ParamField>
+
+<ParamField path="cause" type="unknown">
+  The underlying error from the service
+</ParamField>
+
+<ParamField path="operation" type="string">
+  Operation being performed
+</ParamField>
+
+<ParamField path="component" type="string">
+  Component making the external call
+</ParamField>
+
+```typescript
+return Err(
+  ErrorFactory.externalService(
+    'Payment processing failed',
+    'stripe',
+    stripeError,
+    'createCharge'
+  )
+);
+```
+
+### internal
+
+Creates an internal server error (HTTP 500).
+
+```typescript
+internal(
+  message: string,
+  cause?: unknown,
+  component?: string
+): InternalServerError
+```
+
+<ParamField path="message" type="string" required>
+  Error message
+</ParamField>
+
+<ParamField path="cause" type="unknown">
+  The underlying error
+</ParamField>
+
+<ParamField path="component" type="string">
+  Component where the error occurred
+</ParamField>
+
+```typescript
+return Err(ErrorFactory.internal('Unexpected error', originalError));
+```
+
+### tooManyRequests
+
+Creates a rate limit error (HTTP 429).
+
+```typescript
+tooManyRequests(
+  message: string,
+  retryAfter: number,
+  component?: string
+): TooManyRequestsError
+```
+
+<ParamField path="message" type="string" required>
+  Error message
+</ParamField>
+
+<ParamField path="retryAfter" type="number" required>
+  Seconds until the client may retry
+</ParamField>
+
+<ParamField path="component" type="string">
+  Component where rate limiting occurred
+</ParamField>
+
+```typescript
+return Err(ErrorFactory.tooManyRequests('Slow down.', 30));
+```

@@ -1,0 +1,528 @@
+---
+title: Testing
+description: Test NduloJS applications with Result types, dependency injection, and HTTP handlers
+---
+
+NduloJS is designed for testability. This guide covers testing patterns for services, repositories, controllers, and Result-based flows.
+
+## Setup
+
+Install Vitest (recommended):
+
+```bash
+bun add -d vitest
+```
+
+**vitest.config.ts:**
+
+```ts
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: 'node',
+  },
+});
+```
+
+## Testing services
+
+Services return `Result<T, AppError>`. Test both success and error paths.
+
+### Basic service test
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { createUserService } from './user.service.js';
+import { createMockUserRepository } from './__mocks__/user.repository.js';
+
+describe('UserService.register', () => {
+  it('returns Ok with user and token on success', async () => {
+    const repo = createMockUserRepository();
+    const service = createUserService(repo);
+
+    const result = await service.register({
+      email: 'ada@example.com',
+      password: 'secret123',
+      name: 'Ada Lovelace',
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.value.user.email).toBe('ada@example.com');
+      expect(result.value.token).toBeDefined();
+    }
+  });
+
+  it('returns Err when email already exists', async () => {
+    const repo = createMockUserRepository();
+    const service = createUserService(repo);
+
+    // Create first user
+    await service.register({ email: 'ada@example.com', password: 'pass', name: 'Ada' });
+
+    // Try duplicate
+    const result = await service.register({
+      email: 'ada@example.com',
+      password: 'different',
+      name: 'Another',
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.type).toBe('CONFLICT');
+      expect(result.error.message).toContain('Email');
+    }
+  });
+});
+```
+
+<Note>
+  Always use type guards (`if (result.success)`) instead of `unwrap()` unless you're certain of the outcome.
+</Note>
+
+### Mock repositories
+
+Create in-memory mocks for repositories:
+
+**src/modules/users/__mocks__/user.repository.ts:**
+
+```ts
+import type { IUserRepository } from '../application/ports/user.port.js';
+import type { UserDTO } from '../application/dtos/user.dto.js';
+
+const db = new Map<string, UserDTO & { passwordHash: string }>();
+let idCounter = 1;
+
+export const createMockUserRepository = (): IUserRepository => ({
+  async findByEmail(email) {
+    for (const user of db.values()) {
+      if (user.email === email) return user;
+    }
+    return null;
+  },
+
+  async findById(id) {
+    const user = db.get(id);
+    if (!user) return null;
+    const { passwordHash, ...publicUser } = user;
+    return publicUser;
+  },
+
+  async create({ email, name, passwordHash }) {
+    const id = String(idCounter++);
+    const user = { id, email, name, passwordHash, createdAt: new Date() };
+    db.set(id, user);
+    const { passwordHash: _, ...publicUser } = user;
+    return publicUser;
+  },
+
+  // Add a reset helper for tests
+  _reset() {
+    db.clear();
+    idCounter = 1;
+  },
+});
+```
+
+Reset between tests:
+
+```ts
+import { beforeEach } from 'vitest';
+
+let repo: ReturnType<typeof createMockUserRepository>;
+let service: IUserService;
+
+beforeEach(() => {
+  repo = createMockUserRepository();
+  service = createUserService(repo);
+});
+```
+
+## Testing with DI container
+
+Test services with real dependency injection:
+
+```ts
+import { createContainer } from '@ndulojs/core';
+import { describe, it, expect, beforeEach } from 'vitest';
+
+describe('UserService (with DI)', () => {
+  let container: ReturnType<typeof createContainer>;
+
+  beforeEach(() => {
+    container = createContainer()
+      .register('UserRepository', () => createMockUserRepository())
+      .register('UserService', (c) => createUserService(c.resolve('UserRepository')));
+  });
+
+  it('resolves UserService with dependencies', () => {
+    const service = container.resolve('UserService');
+    expect(service).toBeDefined();
+  });
+
+  it('registers a user successfully', async () => {
+    const service = container.resolve('UserService');
+    const result = await service.register({
+      email: 'test@example.com',
+      password: 'secret',
+      name: 'Test',
+    });
+
+    expect(result.success).toBe(true);
+  });
+});
+```
+
+<Tip>
+  Use `container.reset()` between tests to clear singleton cache.
+</Tip>
+
+## Testing Result utilities
+
+Test helpers like `map`, `flatMap`, and `combine`:
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { Ok, Err, map, flatMap, combine, ErrorFactory } from '@ndulojs/core';
+
+describe('map', () => {
+  it('transforms the value when Ok', () => {
+    const result = map(Ok(10), (n) => n * 2);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.value).toBe(20);
+  });
+
+  it('passes Err through unchanged', () => {
+    const error = ErrorFactory.notFound('Not found');
+    const result = map(Err(error), (n: number) => n * 2);
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error).toBe(error);
+  });
+});
+
+describe('flatMap', () => {
+  it('chains operations that return Result', () => {
+    const result = flatMap(Ok(5), (n) => Ok(n + 10));
+    if (result.success) expect(result.value).toBe(15);
+  });
+
+  it('short-circuits on Err', () => {
+    const error = ErrorFactory.business('Failed');
+    const result = flatMap(Err(error), (n: number) => Ok(n + 10));
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('combine', () => {
+  it('combines multiple Ok results', () => {
+    const results = [Ok(1), Ok(2), Ok(3)];
+    const combined = combine(results);
+    if (combined.success) expect(combined.value).toEqual([1, 2, 3]);
+  });
+
+  it('returns first Err encountered', () => {
+    const error = ErrorFactory.validation('Bad input');
+    const results = [Ok(1), Err(error), Ok(3)];
+    const combined = combine(results);
+    expect(combined.success).toBe(false);
+  });
+});
+```
+
+## Testing HTTP handlers
+
+Test controllers by mocking services:
+
+```ts
+import { describe, it, expect, vi } from 'vitest';
+import { createApp, Ok, Err, ErrorFactory } from '@ndulojs/core';
+import { createUserController } from './user.controller.js';
+import type { IUserService } from '../../application/ports/user.port.js';
+
+describe('UserController', () => {
+  it('POST /users/register returns 200 on success', async () => {
+    const mockService: IUserService = {
+      register: vi.fn(async () => Ok({
+        user: { id: '1', email: 'ada@example.com', name: 'Ada', createdAt: new Date() },
+        token: 'jwt-token',
+      })),
+      login: vi.fn(),
+      me: vi.fn(),
+    };
+
+    const app = await createApp({ port: 0 });
+    createUserController(app, mockService);
+
+    // Use Elysia's test utilities
+    const response = await app.handle(
+      new Request('http://localhost/users/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: 'ada@example.com',
+          password: 'secret',
+          name: 'Ada',
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+  });
+
+  it('POST /users/register returns 409 on conflict', async () => {
+    const mockService: IUserService = {
+      register: vi.fn(async () => 
+        Err(ErrorFactory.conflict('Email already in use', 'email'))
+      ),
+      login: vi.fn(),
+      me: vi.fn(),
+    };
+
+    const app = await createApp({ port: 0 });
+    createUserController(app, mockService);
+
+    const response = await app.handle(
+      new Request('http://localhost/users/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'ada@example.com', password: 'pass', name: 'Ada' }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.success).toBe(false);
+    expect(body.error.type).toBe('CONFLICT');
+  });
+});
+```
+
+<Warning>
+  Use `vi.fn()` from Vitest to create mock functions. This allows you to verify calls and return values.
+</Warning>
+
+## Testing error paths
+
+Always test both success and error scenarios:
+
+```ts
+describe('ProductService.reduceStock', () => {
+  it('reduces stock when sufficient', async () => {
+    const repo = createMockProductRepository();
+    await repo.create({ name: 'Widget', price: 10, stock: 100 });
+    const service = createProductService(repo);
+
+    const result = await service.reduceStock('1', 20);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.value.stock).toBe(80);
+    }
+  });
+
+  it('returns BUSINESS_ERROR when stock insufficient', async () => {
+    const repo = createMockProductRepository();
+    await repo.create({ name: 'Widget', price: 10, stock: 10 });
+    const service = createProductService(repo);
+
+    const result = await service.reduceStock('1', 20);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.type).toBe('BUSINESS_ERROR');
+      expect(result.error.code).toBe('INSUFFICIENT_STOCK');
+    }
+  });
+
+  it('returns NOT_FOUND when product missing', async () => {
+    const repo = createMockProductRepository();
+    const service = createProductService(repo);
+
+    const result = await service.reduceStock('999', 10);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.type).toBe('NOT_FOUND');
+    }
+  });
+});
+```
+
+## Snapshot testing for errors
+
+Use snapshots to verify error structures:
+
+```ts
+it('returns validation error with correct structure', async () => {
+  const result = await service.createProduct({
+    name: '',
+    price: -10,
+    stock: -5,
+  });
+
+  expect(result.success).toBe(false);
+  if (!result.success) {
+    expect(result.error).toMatchSnapshot();
+  }
+});
+```
+
+## Testing with scoped dependencies
+
+Test scoped services (e.g., per-request logger):
+
+```ts
+import { createContainer } from '@ndulojs/core';
+
+it('scoped dependencies are isolated per scope', () => {
+  const container = createContainer()
+    .registerScoped('RequestId', () => Math.random().toString());
+
+  const scope1 = container.createScope();
+  const scope2 = container.createScope();
+
+  const id1 = scope1.resolve('RequestId');
+  const id2 = scope2.resolve('RequestId');
+
+  expect(id1).not.toBe(id2);
+});
+```
+
+## Integration tests
+
+Test the full stack with a real HTTP server:
+
+```ts
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { createApp, createContainer } from '@ndulojs/core';
+
+let app: Awaited<ReturnType<typeof createApp>>;
+let server: ReturnType<typeof app.listen>;
+
+beforeAll(async () => {
+  const container = createContainer()
+    .register('UserRepository', () => createMockUserRepository())
+    .register('UserService', (c) => createUserService(c.resolve('UserRepository')));
+
+  app = await createApp({ port: 0 }); // Random port
+  createUserController(app, container.resolve('UserService'));
+  server = app.listen(0);
+});
+
+afterAll(() => {
+  server.stop();
+});
+
+it('registers and logs in a user', async () => {
+  // Register
+  const registerRes = await fetch('http://localhost:3000/users/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'ada@example.com', password: 'secret', name: 'Ada' }),
+  });
+  expect(registerRes.status).toBe(200);
+  const { data } = await registerRes.json();
+  expect(data.token).toBeDefined();
+
+  // Login
+  const loginRes = await fetch('http://localhost:3000/users/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'ada@example.com', password: 'secret' }),
+  });
+  expect(loginRes.status).toBe(200);
+});
+```
+
+<Accordion title="Using supertest for HTTP testing">
+  ```bash
+  bun add -d supertest @types/supertest
+  ```
+
+  ```ts
+  import request from 'supertest';
+
+  it('POST /users/register returns 200', async () => {
+    const response = await request(app)
+      .post('/users/register')
+      .send({ email: 'ada@example.com', password: 'secret', name: 'Ada' })
+      .expect(200);
+
+    expect(response.body.success).toBe(true);
+  });
+  ```
+</Accordion>
+
+## Test coverage
+
+Run coverage with Vitest:
+
+```bash
+vitest --coverage
+```
+
+Add to `package.json`:
+
+```json
+{
+  "scripts": {
+    "test": "vitest",
+    "test:coverage": "vitest --coverage"
+  }
+}
+```
+
+<Tip>
+  Aim for high coverage on services (business logic). Controllers can have lower coverage if they're thin.
+</Tip>
+
+## Testing best practices
+
+<Steps>
+  <Step title="Test behavior, not implementation">
+    Test what the service does, not how it does it. Avoid testing private functions.
+  </Step>
+
+  <Step title="Use descriptive test names">
+    ```ts
+    // ✅ Good
+    it('returns CONFLICT when email already exists')
+
+    // ❌ Bad
+    it('test register function')
+    ```
+  </Step>
+
+  <Step title="Arrange, Act, Assert">
+    ```ts
+    it('reduces stock correctly', async () => {
+      // Arrange
+      const repo = createMockProductRepository();
+      await repo.create({ name: 'Widget', price: 10, stock: 100 });
+      const service = createProductService(repo);
+
+      // Act
+      const result = await service.reduceStock('1', 20);
+
+      // Assert
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.value.stock).toBe(80);
+    });
+    ```
+  </Step>
+
+  <Step title="Isolate tests">
+    Use `beforeEach` to reset state. Tests should not depend on each other.
+  </Step>
+
+  <Step title="Test edge cases">
+    - Empty inputs
+    - Missing resources
+    - Boundary values (zero, negative numbers)
+    - Concurrent operations
+  </Step>
+</Steps>

@@ -1,0 +1,237 @@
+---
+title: ndulo add
+description: Add individual files to existing modules
+---
+
+The `ndulo add` command generates a single file within an existing module. Use this when you need additional controllers, services, or other layer files without regenerating the entire module.
+
+## Usage
+
+```bash
+ndulo add <type> <module>
+```
+
+### Arguments
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<type>` | Yes | File type to generate |
+| `<module>` | Yes | Target module name |
+
+### Available types
+
+| Type | Generated file |
+|------|----------------|
+| `controller` | `infrastructure/http/controllers/{name}.controller.ts` |
+| `service` | `application/services/{name}.service.ts` |
+| `repository` | `infrastructure/persistence/{name}.repository.ts` |
+| `dto` | `application/dtos/{name}.dto.ts` |
+| `port` | `application/ports/{name}.port.ts` |
+| `events` | `events/{name}.events.ts` |
+
+## Examples
+
+### Add a controller
+
+```bash
+ndulo add controller farms
+```
+
+**Output:**
+```bash
+✓ Added: src/modules/farms/infrastructure/http/controllers/farm.controller.ts
+```
+
+**Generated file:**
+```typescript
+import type { IHttpAdapter } from 'ndulojs';
+import type { IFarmService } from '../../../application/ports/farm.port.js';
+
+export const createFarmController = (app: IHttpAdapter, service: IFarmService): void => {
+  app.group('/farms', (router) => {
+    // define routes here
+  });
+};
+```
+
+### Add a service
+
+```bash
+ndulo add service farms
+```
+
+**Output:**
+```bash
+✓ Added: src/modules/farms/application/services/farm.service.ts
+```
+
+**Generated file:**
+```typescript
+import type { IFarmRepository, IFarmService } from '../ports/farm.port.js';
+
+export const createFarmService = (repo: IFarmRepository): IFarmService => ({});
+```
+
+### Add a repository
+
+```bash
+ndulo add repository farms
+```
+
+**Output:**
+```bash
+✓ Added: src/modules/farms/infrastructure/persistence/farm.repository.ts
+```
+
+**Generated file:**
+```typescript
+import type { IFarmRepository } from '../../application/ports/farm.port.js';
+
+export const createFarmRepository = (): IFarmRepository => ({});
+```
+
+### Add DTOs
+
+```bash
+ndulo add dto farms
+```
+
+**Output:**
+```bash
+✓ Added: src/modules/farms/application/dtos/farm.dto.ts
+```
+
+**Generated file:**
+```typescript
+export type CreateFarmDTO = Record<string, unknown>;
+export type UpdateFarmDTO = Partial<CreateFarmDTO>;
+export type FarmResponseDTO = { id: string };
+```
+
+### Add ports (interfaces)
+
+```bash
+ndulo add port farms
+```
+
+**Output:**
+```bash
+✓ Added: src/modules/farms/application/ports/farm.port.ts
+```
+
+**Generated file:**
+```typescript
+import type { Result, AppError } from 'ndulojs';
+import type { CreateFarmDTO, FarmResponseDTO } from '../dtos/farm.dto.js';
+
+export interface IFarmRepository {}
+
+export interface IFarmService {}
+```
+
+### Add events
+
+```bash
+ndulo add events farms
+```
+
+**Output:**
+```bash
+✓ Added: src/modules/farms/events/farm.events.ts
+```
+
+**Generated file:**
+```typescript
+export type FarmEventPayload = Record<string, unknown>;
+
+export const farmEvents = {} as const;
+```
+
+## Error handling
+
+### Invalid file type
+
+```bash
+ndulo add model farms
+```
+
+**Output:**
+```bash
+✗ Unknown type "model". Valid: controller, service, repository, dto, port, events
+```
+
+### Module not found
+
+```bash
+ndulo add controller users
+```
+
+**Output (if users module doesn't exist):**
+```bash
+✗ Module "users" not found in src/modules/
+```
+
+<Tip>
+Generate the module first with `ndulo generate module users`
+</Tip>
+
+### File already exists
+
+```bash
+ndulo add service farms
+```
+
+**Output (if farm.service.ts exists):**
+```bash
+"src/modules/farms/application/services/farm.service.ts" already exists. Overwrite? (y/N)
+```
+
+- Type `y` to replace the existing file
+- Type `n` to cancel and keep the current file
+
+## Use cases
+
+<AccordionGroup>
+  <Accordion title="Adding a second controller">
+    When you need multiple controllers for different route groups:
+
+    ```bash
+    ndulo add controller farms
+    # Manually rename to farm-admin.controller.ts for admin routes
+    ```
+  </Accordion>
+
+  <Accordion title="Replacing a generated file">
+    If you want to regenerate a single file without affecting others:
+
+    ```bash
+    ndulo add dto farms
+    # Overwrites only the DTO file
+    ```
+  </Accordion>
+
+  <Accordion title="Adding missing layers">
+    If you deleted a file and want to restore the template:
+
+    ```bash
+    ndulo add repository farms
+    # Restores the repository with the base template
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Name handling
+
+The CLI uses the same name normalization as `ndulo generate`:
+
+```bash
+ndulo add controller farm-members
+# → farm-member.controller.ts with FarmMember class names
+
+ndulo add service cropCycles
+# → crop-cycle.service.ts with CropCycle class names
+```
+
+<Note>
+The module name must match an existing module directory in `src/modules/`.
+</Note>

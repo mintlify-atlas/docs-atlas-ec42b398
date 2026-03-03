@@ -1,0 +1,331 @@
+---
+title: 'createApp and AppInstance'
+description: 'Core HTTP adapter for creating and configuring NduloJS applications'
+---
+
+## createApp()
+
+Creates a new NduloJS application with HTTP server capabilities, automatic logging, and optional Swagger documentation.
+
+```typescript
+function createApp(config: AppConfig): Promise<AppInstance>
+```
+
+### Parameters
+
+<ParamField path="config" type="AppConfig" required>
+  Application configuration object
+  
+  <ParamField path="config.port" type="number" required>
+    Port number for the HTTP server
+  </ParamField>
+  
+  <ParamField path="config.logger" type="LoggerConfig">
+    Logger configuration. Logging is enabled by default with file rotation.
+    
+    <ParamField path="config.logger.enabled" type="boolean" default="true">
+      Set to `false` to disable all logging
+    </ParamField>
+    
+    <ParamField path="config.logger.level" type="'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'" default="'info'">
+      Minimum log level to capture
+    </ParamField>
+    
+    <ParamField path="config.logger.dir" type="string" default="'logs'">
+      Root directory for log files. Logs are automatically organized into subdirectories: `app/`, `http/`, and `error/`
+    </ParamField>
+    
+    <ParamField path="config.logger.pretty" type="boolean" default="false">
+      Enable pretty-printed terminal output instead of file logging. Use `true` in development, `false` in production.
+    </ParamField>
+    
+    <ParamField path="config.logger.retainDays" type="number" default="30">
+      Number of days to retain rotated log files per channel
+    </ParamField>
+  </ParamField>
+  
+  <ParamField path="config.swagger" type="SwaggerConfig">
+    Swagger/OpenAPI documentation configuration
+    
+    <ParamField path="config.swagger.enabled" type="boolean" required>
+      Enable Swagger UI documentation
+    </ParamField>
+    
+    <ParamField path="config.swagger.path" type="string" default="'/docs'">
+      URL path for Swagger UI
+    </ParamField>
+    
+    <ParamField path="config.swagger.title" type="string" default="'NduloJS API'">
+      API documentation title
+    </ParamField>
+    
+    <ParamField path="config.swagger.version" type="string" default="'1.0.0'">
+      API version
+    </ParamField>
+    
+    <ParamField path="config.swagger.description" type="string">
+      API description
+    </ParamField>
+    
+    <ParamField path="config.swagger.tags" type="Array<{ name: string; description?: string }>">
+      OpenAPI tag definitions for grouping endpoints
+    </ParamField>
+  </ParamField>
+</ParamField>
+
+### Returns
+
+<ResponseField name="AppInstance" type="Promise<AppInstance>">
+  Returns a promise that resolves to an AppInstance containing the HTTP adapter and logger
+  
+  <ResponseField name="app" type="IHttpAdapter">
+    HTTP adapter for registering routes and middleware
+  </ResponseField>
+  
+  <ResponseField name="logger" type="LoggerSuite">
+    Structured logger with separate channels: `app`, `http`, and `error`
+  </ResponseField>
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Basic setup
+import { createApp } from '@ndulojs/core';
+
+const { app, logger } = await createApp({ 
+  port: 3000,
+  logger: { enabled: true, level: 'info' }
+});
+
+logger.app.info('Server starting');
+
+app.get('/health', () => ({ status: 'ok' }));
+app.listen(3000);
+```
+
+```typescript Development configuration
+import { createApp } from '@ndulojs/core';
+
+const { app, logger } = await createApp({
+  port: 3000,
+  logger: {
+    enabled: true,
+    level: 'debug',
+    pretty: true  // Pretty terminal output for development
+  },
+  swagger: {
+    enabled: true,
+    path: '/docs',
+    title: 'My API',
+    version: '1.0.0',
+    description: 'API documentation'
+  }
+});
+
+app.listen(3000);
+logger.app.info('Server running on http://localhost:3000');
+logger.app.info('API docs available at http://localhost:3000/docs');
+```
+
+```typescript Production configuration
+import { createApp } from '@ndulojs/core';
+
+const { app, logger } = await createApp({
+  port: Number(process.env.PORT) || 3000,
+  logger: {
+    enabled: true,
+    level: 'warn',
+    dir: '/var/log/myapp',
+    retainDays: 90,
+    pretty: false  // File-based logging for production
+  },
+  swagger: {
+    enabled: false  // Disable in production
+  }
+});
+
+app.listen(Number(process.env.PORT) || 3000);
+```
+
+```typescript Disable logging
+import { createApp } from '@ndulojs/core';
+
+const { app, logger } = await createApp({
+  port: 3000,
+  logger: { enabled: false }
+});
+
+app.listen(3000);
+```
+
+</CodeGroup>
+
+---
+
+## AppInstance
+
+The return type of `createApp()`, providing access to both the HTTP adapter and logger.
+
+```typescript
+type AppInstance = {
+  readonly app: IHttpAdapter;
+  readonly logger: LoggerSuite;
+}
+```
+
+### Properties
+
+<ResponseField name="app" type="IHttpAdapter">
+  The HTTP adapter instance for registering routes, middleware, and managing the server lifecycle.
+  See [IHttpAdapter](#ihttpadapter) for available methods.
+</ResponseField>
+
+<ResponseField name="logger" type="LoggerSuite">
+  Structured logger with three separate channels:
+  
+  - `logger.app` - Application-level logs
+  - `logger.http` - HTTP request/response logs (automatically populated)
+  - `logger.error` - Error logs
+  
+  Each channel supports methods: `trace()`, `debug()`, `info()`, `warn()`, `error()`, `fatal()`
+</ResponseField>
+
+### Example
+
+```typescript
+const { app, logger } = await createApp({ port: 3000 });
+
+// Use the app to register routes
+app.get('/users', () => Ok({ users: [] }));
+
+// Use the logger for application logs
+logger.app.info('Starting user service');
+logger.error.error({ err: new Error('Failed') }, 'Operation failed');
+
+// HTTP logs are automatically generated for requests
+app.listen(3000);
+```
+
+---
+
+## IHttpAdapter
+
+The core HTTP adapter interface. All framework-specific code (Elysia) lives behind this abstraction.
+
+```typescript
+interface IHttpAdapter {
+  get(path: string, handler: Handler, meta?: RouteMeta): this;
+  post(path: string, handler: Handler, meta?: RouteMeta): this;
+  put(path: string, handler: Handler, meta?: RouteMeta): this;
+  patch(path: string, handler: Handler, meta?: RouteMeta): this;
+  delete(path: string, handler: Handler, meta?: RouteMeta): this;
+  group(prefix: string, fn: (app: this) => void): this;
+  use(plugin: unknown): this;
+  getElysia(): unknown;
+  listen(port: number): void;
+  stop(): Promise<void>;
+}
+```
+
+### Methods
+
+All route registration methods (`get`, `post`, `put`, `patch`, `delete`) follow the same signature. See [Routing](/api/http/routing) for detailed documentation.
+
+<ParamField path="listen" type="(port: number) => void">
+  Starts the HTTP server on the specified port.
+  
+  ```typescript
+  app.listen(3000);
+  ```
+</ParamField>
+
+<ParamField path="stop" type="() => Promise<void>">
+  Gracefully stops the HTTP server.
+  
+  ```typescript
+  await app.stop();
+  ```
+</ParamField>
+
+<ParamField path="use" type="(plugin: unknown) => this">
+  Applies a raw Elysia plugin to the underlying server. Use this for Elysia-native plugins like JWT, Bearer auth, etc.
+  
+  ```typescript
+  import { jwt } from '@elysiajs/jwt';
+  
+  app.use(jwt({ 
+    name: 'jwt', 
+    secret: process.env.JWT_SECRET 
+  }));
+  ```
+</ParamField>
+
+<ParamField path="getElysia" type="() => unknown">
+  Returns the raw underlying Elysia instance. This is an escape hatch for Elysia-specific features not exposed by the adapter.
+  
+  <Warning>
+    Using `getElysia()` bypasses the NduloJS abstraction layer. Only use when absolutely necessary.
+  </Warning>
+  
+  ```typescript
+  const elysia = app.getElysia();
+  // Use Elysia-specific APIs
+  ```
+</ParamField>
+
+---
+
+## Type definitions
+
+### AppConfig
+
+```typescript
+type AppConfig = {
+  readonly port: number;
+  readonly logger?: LoggerConfig | undefined;
+  readonly swagger?: SwaggerConfig | undefined;
+}
+```
+
+### LoggerConfig
+
+```typescript
+type LoggerConfig = {
+  readonly level?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' | undefined;
+  readonly dir?: string | undefined;
+  readonly pretty?: boolean | undefined;
+  readonly retainDays?: number | undefined;
+  readonly enabled?: boolean | undefined;
+}
+```
+
+### SwaggerConfig
+
+```typescript
+type SwaggerConfig = {
+  readonly enabled: boolean;
+  readonly path?: string | undefined;
+  readonly title?: string | undefined;
+  readonly version?: string | undefined;
+  readonly description?: string | undefined;
+  readonly tags?: Array<{ name: string; description?: string | undefined }> | undefined;
+}
+```
+
+---
+
+## Notes
+
+<Note>
+  The logger is automatically configured to:
+  - Write rotating daily log files to `logs/app/`, `logs/http/`, and `logs/error/`
+  - Automatically log all incoming HTTP requests and responses
+  - Retain log files for 30 days by default
+  - Use structured JSON logging in production for easy parsing
+</Note>
+
+<Note>
+  `createApp()` is asynchronous because it dynamically imports Elysia and optional plugins (Swagger) to minimize bundle size.
+</Note>

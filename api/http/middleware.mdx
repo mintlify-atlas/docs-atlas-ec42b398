@@ -1,0 +1,474 @@
+---
+title: 'Middleware system'
+description: 'Built-in middleware and custom middleware creation'
+---
+
+## Overview
+
+NduloJS includes built-in middleware for automatic error handling, request/response logging, and result processing. You can also create custom middleware for authentication, validation, rate limiting, and more.
+
+---
+
+## Built-in middleware
+
+NduloJS automatically applies two essential middleware components:
+
+1. **Result middleware** - Automatically processes `Result<T, AppError>` returns and maps them to HTTP responses
+2. **Logger middleware** - Logs all incoming requests and outgoing responses with timing and context
+
+These middleware are always active and require no configuration.
+
+---
+
+## Result middleware
+
+The result middleware is the core of NduloJS's automatic error handling. It processes handler return values and converts them to appropriate HTTP responses.
+
+### How it works
+
+```typescript
+export const processHandlerResult = (
+  value: unknown
+): { body: unknown; status: number }
+```
+
+The middleware automatically:
+- Detects if the return value is a `Result<T, AppError>`
+- For `Ok(value)`: Returns 200 with `{ success: true, data: value }`
+- For `Err(error)`: Maps error type to HTTP status and returns formatted error response
+- For raw values: Returns 200 with the value as-is
+
+### Error to status mapping
+
+```typescript
+const errorToStatus = (error: AppError): number => error.statusCode;
+```
+
+Each `AppError` type includes its appropriate HTTP status code:
+
+| Error Type | Status Code | Use Case |
+|------------|-------------|----------|
+| `ValidationError` | 400 | Invalid request data |
+| `UnauthorizedError` | 401 | Missing or invalid authentication |
+| `ForbiddenError` | 403 | Insufficient permissions |
+| `NotFoundError` | 404 | Resource not found |
+| `ConflictError` | 409 | Resource conflict (e.g., duplicate) |
+| `TooManyRequestsError` | 429 | Rate limit exceeded |
+| `BusinessError` | 422 | Business logic violation |
+| `DatabaseError` | 500 | Database operation failed |
+| `ExternalServiceError` | 502 | External service unavailable |
+| `InternalServerError` | 500 | Unexpected server error |
+
+### Response formats
+
+<CodeGroup>
+
+```json Success response
+{
+  "success": true,
+  "data": {
+    "id": "123",
+    "email": "user@example.com",
+    "name": "John Doe"
+  }
+}
+```
+
+```json Error response
+{
+  "success": false,
+  "error": {
+    "type": "VALIDATION_ERROR",
+    "message": "Invalid request data",
+    "code": "VALIDATION_FAILED",
+    "details": [
+      {
+        "field": "email",
+        "message": "Email is required",
+        "rule": "required"
+      }
+    ],
+    "timestamp": "2024-01-15T10:30:00.000Z"
+  }
+}
+```
+
+```json Not found error
+{
+  "success": false,
+  "error": {
+    "type": "NOT_FOUND",
+    "message": "User not found",
+    "resource": "User",
+    "timestamp": "2024-01-15T10:30:00.000Z"
+  }
+}
+```
+
+```json Rate limit error
+{
+  "success": false,
+  "error": {
+    "type": "TOO_MANY_REQUESTS",
+    "message": "Rate limit exceeded",
+    "retryAfter": 60,
+    "timestamp": "2024-01-15T10:30:00.000Z"
+  }
+}
+```
+
+</CodeGroup>
+
+### Example usage
+
+```typescript
+import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+
+app.get('/users/:id', async ({ params }) => {
+  const user = await findUser(params.id);
+  
+  if (!user) {
+    // Returns 404 with formatted error
+    return Err(ErrorFactory.notFound('User not found', 'User', params.id));
+  }
+  
+  // Returns 200 with { success: true, data: user }
+  return Ok(user);
+});
+
+app.post('/users', async ({ body }) => {
+  const data = body as { email: string; password: string };
+  
+  if (!data.email || !data.password) {
+    // Returns 400 with validation details
+    return Err(ErrorFactory.validation([
+      { field: 'email', message: 'Email is required' },
+      { field: 'password', message: 'Password is required' }
+    ]));
+  }
+  
+  const user = await createUser(data);
+  return Ok(user);
+});
+```
+
+---
+
+## Logger middleware
+
+The logger middleware automatically logs all HTTP requests and responses with detailed context.
+
+### Request logging
+
+Each incoming request is logged with:
+
+```typescript
+type RequestLog = {
+  requestId: string;        // Unique request identifier
+  method: string;           // HTTP method
+  path: string;             // Request path
+  userAgent?: string;       // Client user agent
+  ip?: string;              // Client IP (from X-Forwarded-For or X-Real-IP)
+}
+```
+
+Example log output:
+
+```json
+{
+  "level": "info",
+  "time": 1705315800000,
+  "requestId": "550e8400-e29b-41d4-a716-446655440000",
+  "method": "GET",
+  "path": "/users/123",
+  "userAgent": "Mozilla/5.0...",
+  "ip": "192.168.1.1",
+  "msg": "Incoming request"
+}
+```
+
+### Response logging
+
+Each outgoing response is logged with:
+
+```typescript
+type ResponseLog = {
+  requestId: string;        // Matches request log
+  method: string;           // HTTP method
+  path: string;             // Request path
+  statusCode: number;       // HTTP status code
+  durationMs: number;       // Request duration in milliseconds
+}
+```
+
+Example log output:
+
+```json
+{
+  "level": "info",
+  "time": 1705315800150,
+  "requestId": "550e8400-e29b-41d4-a716-446655440000",
+  "method": "GET",
+  "path": "/users/123",
+  "statusCode": 200,
+  "durationMs": 150,
+  "msg": "Request completed"
+}
+```
+
+### Log levels
+
+Response logs use different levels based on status code:
+
+- `2xx` status: `info` level
+- `4xx` status: `warn` level
+- `5xx` status: `error` level
+
+### Request ID generation
+
+Request IDs are automatically generated:
+
+```typescript
+export const generateRequestId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+```
+
+### IP extraction
+
+Client IPs are extracted from headers:
+
+```typescript
+export const extractIp = (request: Request): string | undefined =>
+  request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
+  request.headers.get('x-real-ip') ??
+  undefined;
+```
+
+---
+
+## Custom middleware
+
+While NduloJS doesn't currently expose a direct middleware API, you can create middleware-like behavior using Elysia plugins via the `use()` method.
+
+### Using Elysia plugins
+
+NduloJS exposes the `use()` method to apply Elysia plugins:
+
+```typescript
+use(plugin: unknown): this
+```
+
+### Examples
+
+<CodeGroup>
+
+```typescript JWT authentication
+import { jwt } from '@elysiajs/jwt';
+
+const { app } = await createApp({ port: 3000 });
+
+app.use(jwt({
+  name: 'jwt',
+  secret: process.env.JWT_SECRET!
+}));
+
+// Now you can access JWT methods in your handlers
+app.get('/protected', async ({ headers }) => {
+  const token = headers['authorization']?.replace('Bearer ', '');
+  
+  if (!token) {
+    return Err(ErrorFactory.unauthorized('Missing token'));
+  }
+  
+  // Verify token logic here
+  return Ok({ protected: true });
+});
+```
+
+```typescript Bearer authentication
+import { bearer } from '@elysiajs/bearer';
+
+const { app } = await createApp({ port: 3000 });
+
+app.use(bearer());
+
+// Bearer token available in context
+app.get('/api/data', async ({ headers }) => {
+  const token = headers['authorization']?.replace('Bearer ', '');
+  
+  if (token !== process.env.API_KEY) {
+    return Err(ErrorFactory.unauthorized('Invalid API key'));
+  }
+  
+  return Ok({ data: 'sensitive' });
+});
+```
+
+```typescript CORS (custom)
+import { cors } from '@elysiajs/cors';
+
+const { app } = await createApp({ port: 3000 });
+
+app.use(cors({
+  origin: ['https://example.com', 'https://app.example.com'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+```
+
+</CodeGroup>
+
+### Middleware pattern using handlers
+
+You can implement middleware-like behavior by creating reusable handler functions:
+
+<CodeGroup>
+
+```typescript Authentication helper
+import { Err, ErrorFactory } from '@ndulojs/core';
+import type { RequestContext, Result } from '@ndulojs/core';
+
+const requireAuth = async (
+  ctx: RequestContext
+): Promise<Result<string, AppError>> => {
+  const token = ctx.headers['authorization']?.replace('Bearer ', '');
+  
+  if (!token) {
+    return Err(ErrorFactory.unauthorized('Missing token', 'missing_token'));
+  }
+  
+  const userId = await verifyToken(token);
+  
+  if (!userId) {
+    return Err(ErrorFactory.unauthorized('Invalid token', 'invalid_token'));
+  }
+  
+  return Ok(userId);
+};
+
+// Use in handlers
+app.get('/me', async (ctx) => {
+  const userIdResult = await requireAuth(ctx);
+  
+  if (!userIdResult.success) {
+    return userIdResult; // Return the error
+  }
+  
+  const userId = userIdResult.value;
+  return service.getUser(userId);
+});
+```
+
+```typescript Validation helper
+import { Err, ErrorFactory } from '@ndulojs/core';
+
+const validateEmail = (email: unknown): Result<string, AppError> => {
+  if (typeof email !== 'string' || !email.includes('@')) {
+    return Err(ErrorFactory.validation([
+      { field: 'email', message: 'Invalid email format' }
+    ]));
+  }
+  return Ok(email);
+};
+
+app.post('/users', async ({ body }) => {
+  const data = body as { email: string; password: string };
+  
+  const emailResult = validateEmail(data.email);
+  if (!emailResult.success) {
+    return emailResult;
+  }
+  
+  return service.createUser(data);
+});
+```
+
+```typescript Rate limiting helper
+const rateLimiter = new Map<string, { count: number; resetAt: number }>();
+
+const checkRateLimit = (ip: string, maxRequests = 100): Result<void, AppError> => {
+  const now = Date.now();
+  const limit = rateLimiter.get(ip);
+  
+  if (!limit || now > limit.resetAt) {
+    rateLimiter.set(ip, { count: 1, resetAt: now + 60000 });
+    return Ok(undefined);
+  }
+  
+  if (limit.count >= maxRequests) {
+    return Err(ErrorFactory.tooManyRequests(
+      'Rate limit exceeded',
+      Math.ceil((limit.resetAt - now) / 1000)
+    ));
+  }
+  
+  limit.count++;
+  return Ok(undefined);
+};
+
+app.post('/api/action', async (ctx) => {
+  const ip = extractIp(ctx.request) || 'unknown';
+  const rateLimitResult = checkRateLimit(ip);
+  
+  if (!rateLimitResult.success) {
+    return rateLimitResult;
+  }
+  
+  // Process request
+  return Ok({ success: true });
+});
+```
+
+</CodeGroup>
+
+---
+
+## Type definitions
+
+### Middleware
+
+```typescript
+type Middleware = (
+  ctx: RequestContext
+) => Promise<void | Response> | void | Response;
+```
+
+<Note>
+  This type definition exists in the codebase but is not currently used in the public API. It's reserved for future middleware functionality.
+</Note>
+
+### LogEntry
+
+```typescript
+type LogEntry = LogContext & {
+  readonly requestId: string;
+  readonly method: string;
+  readonly path: string;
+  readonly statusCode?: number | undefined;
+  readonly durationMs?: number | undefined;
+  readonly userAgent?: string | undefined;
+  readonly ip?: string | undefined;
+  readonly error?: string | undefined;
+}
+```
+
+---
+
+## Notes
+
+<Note>
+  Built-in middleware can be disabled by setting `logger: { enabled: false }` in the app configuration. This disables request/response logging but keeps result processing active.
+</Note>
+
+<Warning>
+  When using `use()` to apply Elysia plugins, ensure the plugin is compatible with your Elysia version. NduloJS uses Elysia internally, and plugin compatibility depends on the Elysia version.
+</Warning>
+
+<Note>
+  The result middleware automatically wraps successful `Result` values in `{ success: true, data: ... }`. If you return raw values (not `Result` objects), they are passed through as-is without wrapping.
+</Note>

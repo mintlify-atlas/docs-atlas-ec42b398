@@ -1,0 +1,461 @@
+---
+title: Module development
+description: Build feature modules step-by-step following Clean Architecture in NduloJS
+---
+
+This guide walks through creating a complete module from scratch using the CLI and following Clean Architecture principles.
+
+## Generate the scaffold
+
+Start with the CLI to create the basic structure:
+
+```bash
+ndulo generate module products
+```
+
+This creates:
+
+```
+src/modules/products/
+├── events/product.events.ts
+├── application/
+│   ├── dtos/product.dto.ts
+│   ├── ports/product.port.ts
+│   └── services/product.service.ts
+└── infrastructure/
+    ├── persistence/product.repository.ts
+    └── http/controllers/product.controller.ts
+```
+
+<Tip>
+  Run this from your project root. The CLI expects `src/modules/` to exist.
+</Tip>
+
+## Step 1: Define DTOs
+
+Start with data shapes. DTOs define what enters and leaves your domain.
+
+**src/modules/products/application/dtos/product.dto.ts:**
+
+```ts
+export type ProductDTO = {
+  id: string;
+  name: string;
+  price: number;
+  stock: number;
+  createdAt: Date;
+};
+
+export type CreateProductDTO = {
+  name: string;
+  price: number;
+  stock: number;
+};
+
+export type UpdateProductDTO = Partial<CreateProductDTO>;
+```
+
+<Accordion title="Using Zod for validation">
+  ```ts
+  import { z } from 'zod';
+
+  export const CreateProductSchema = z.object({
+    name: z.string().min(1).max(100),
+    price: z.number().positive(),
+    stock: z.number().int().nonnegative(),
+  });
+
+  export type CreateProductDTO = z.infer<typeof CreateProductSchema>;
+  ```
+</Accordion>
+
+## Step 2: Define ports (interfaces)
+
+Ports are contracts. Define what operations your module supports.
+
+**src/modules/products/application/ports/product.port.ts:**
+
+```ts
+import type { Result, AppError } from '@ndulojs/core';
+import type { ProductDTO, CreateProductDTO, UpdateProductDTO } from '../dtos/product.dto.js';
+
+export interface IProductRepository {
+  findById(id: string): Promise<ProductDTO | null>;
+  findAll(): Promise<ProductDTO[]>;
+  create(data: CreateProductDTO): Promise<ProductDTO>;
+  update(id: string, data: UpdateProductDTO): Promise<ProductDTO | null>;
+  delete(id: string): Promise<boolean>;
+}
+
+export interface IProductService {
+  getProduct(id: string): Promise<Result<ProductDTO, AppError>>;
+  listProducts(): Promise<Result<ProductDTO[], AppError>>;
+  createProduct(data: CreateProductDTO): Promise<Result<ProductDTO, AppError>>;
+  updateProduct(id: string, data: UpdateProductDTO): Promise<Result<ProductDTO, AppError>>;
+  deleteProduct(id: string): Promise<Result<void, AppError>>;
+  reduceStock(id: string, quantity: number): Promise<Result<ProductDTO, AppError>>;
+}
+```
+
+<Note>
+  Repository methods return raw values or null. Services return `Result<T, AppError>` for error handling.
+</Note>
+
+## Step 3: Implement the repository
+
+Repositories handle data access. This example uses an in-memory store.
+
+**src/modules/products/infrastructure/persistence/product.repository.ts:**
+
+```ts
+import type { IProductRepository } from '../../application/ports/product.port.js';
+import type { ProductDTO, CreateProductDTO, UpdateProductDTO } from '../../application/dtos/product.dto.js';
+
+const db = new Map<string, ProductDTO>();
+let idCounter = 1;
+
+export const createProductRepository = (): IProductRepository => ({
+  async findById(id) {
+    return db.get(id) ?? null;
+  },
+
+  async findAll() {
+    return Array.from(db.values());
+  },
+
+  async create(data) {
+    const product: ProductDTO = {
+      id: String(idCounter++),
+      ...data,
+      createdAt: new Date(),
+    };
+    db.set(product.id, product);
+    return product;
+  },
+
+  async update(id, data) {
+    const existing = db.get(id);
+    if (!existing) return null;
+
+    const updated = { ...existing, ...data };
+    db.set(id, updated);
+    return updated;
+  },
+
+  async delete(id) {
+    return db.delete(id);
+  },
+});
+```
+
+<Tabs>
+  <Tab title="Drizzle">
+    ```ts
+    import { eq } from 'drizzle-orm';
+    import type { Database } from '../../../db.js';
+    import { products } from '../../../db/schema.js';
+
+    export const createProductRepository = (db: Database): IProductRepository => ({
+      async findById(id) {
+        const rows = await db.select().from(products).where(eq(products.id, id));
+        return rows[0] ?? null;
+      },
+
+      async create(data) {
+        const [product] = await db.insert(products).values(data).returning();
+        return product;
+      },
+
+      // ... other methods
+    });
+    ```
+  </Tab>
+
+  <Tab title="Prisma">
+    ```ts
+    import type { PrismaClient } from '@prisma/client';
+
+    export const createProductRepository = (prisma: PrismaClient): IProductRepository => ({
+      async findById(id) {
+        return prisma.product.findUnique({ where: { id } });
+      },
+
+      async create(data) {
+        return prisma.product.create({ data });
+      },
+
+      // ... other methods
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Step 4: Implement the service
+
+Services contain business logic and return Results.
+
+**src/modules/products/application/services/product.service.ts:**
+
+```ts
+import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+import type { Result, AppError } from '@ndulojs/core';
+import type { IProductRepository, IProductService } from '../ports/product.port.js';
+import type { ProductDTO, CreateProductDTO, UpdateProductDTO } from '../dtos/product.dto.js';
+
+export const createProductService = (repo: IProductRepository): IProductService => ({
+  async getProduct(id): Promise<Result<ProductDTO, AppError>> {
+    const product = await repo.findById(id);
+    if (!product) {
+      return Err(ErrorFactory.notFound('Product not found', 'Product', id));
+    }
+    return Ok(product);
+  },
+
+  async listProducts(): Promise<Result<ProductDTO[], AppError>> {
+    const products = await repo.findAll();
+    return Ok(products);
+  },
+
+  async createProduct(data): Promise<Result<ProductDTO, AppError>> {
+    // Business validation
+    if (data.price < 0) {
+      return Err(ErrorFactory.validation('Price must be positive', [
+        { field: 'price', message: 'Must be >= 0', value: data.price },
+      ]));
+    }
+
+    const product = await repo.create(data);
+    return Ok(product);
+  },
+
+  async updateProduct(id, data): Promise<Result<ProductDTO, AppError>> {
+    const existing = await repo.findById(id);
+    if (!existing) {
+      return Err(ErrorFactory.notFound('Product not found', 'Product', id));
+    }
+
+    const updated = await repo.update(id, data);
+    return Ok(updated!);
+  },
+
+  async deleteProduct(id): Promise<Result<void, AppError>> {
+    const existing = await repo.findById(id);
+    if (!existing) {
+      return Err(ErrorFactory.notFound('Product not found', 'Product', id));
+    }
+
+    await repo.delete(id);
+    return Ok(undefined);
+  },
+
+  async reduceStock(id, quantity): Promise<Result<ProductDTO, AppError>> {
+    const product = await repo.findById(id);
+    if (!product) {
+      return Err(ErrorFactory.notFound('Product not found', 'Product', id));
+    }
+
+    // Business rule: prevent negative stock
+    if (product.stock < quantity) {
+      return Err(
+        ErrorFactory.business('Insufficient stock', 'INSUFFICIENT_STOCK'),
+      );
+    }
+
+    const updated = await repo.update(id, { stock: product.stock - quantity });
+    return Ok(updated!);
+  },
+});
+```
+
+<Warning>
+  Keep database logic in repositories. Services should only contain business rules.
+</Warning>
+
+## Step 5: Create the controller
+
+Controllers handle HTTP routing and delegate to services.
+
+**src/modules/products/infrastructure/http/controllers/product.controller.ts:**
+
+```ts
+import type { IHttpAdapter } from '@ndulojs/core';
+import type { IProductService } from '../../../application/ports/product.port.js';
+import type { CreateProductDTO, UpdateProductDTO } from '../../../application/dtos/product.dto.js';
+
+export const createProductController = (
+  app: IHttpAdapter,
+  service: IProductService,
+): void => {
+  app.group('/products', (r) => {
+    // List all products
+    r.get('/', async () => {
+      return service.listProducts();
+    });
+
+    // Get single product
+    r.get('/:id', async ({ params }) => {
+      return service.getProduct(params.id);
+    });
+
+    // Create product
+    r.post('/', async ({ body }) => {
+      const data = body as CreateProductDTO;
+      return service.createProduct(data);
+    });
+
+    // Update product
+    r.patch('/:id', async ({ params, body }) => {
+      const data = body as UpdateProductDTO;
+      return service.updateProduct(params.id, data);
+    });
+
+    // Delete product
+    r.delete('/:id', async ({ params }) => {
+      return service.deleteProduct(params.id);
+    });
+  });
+};
+```
+
+<Accordion title="Add Zod validation in controller">
+  ```ts
+  import { CreateProductSchema } from '../../../application/dtos/product.dto.js';
+  import { ErrorFactory, Err } from '@ndulojs/core';
+
+  r.post('/', async ({ body }) => {
+    const parsed = CreateProductSchema.safeParse(body);
+    if (!parsed.success) {
+      const errors = parsed.error.errors.map((e) => ({
+        field: e.path.join('.'),
+        message: e.message,
+      }));
+      return Err(ErrorFactory.validation('Invalid input', errors));
+    }
+
+    return service.createProduct(parsed.data);
+  });
+  ```
+</Accordion>
+
+## Step 6: Register with DI
+
+Wire everything together in `src/index.ts`:
+
+```ts
+import { createApp, createContainer } from '@ndulojs/core';
+import { createProductRepository } from './modules/products/infrastructure/persistence/product.repository.js';
+import { createProductService } from './modules/products/application/services/product.service.js';
+import { createProductController } from './modules/products/infrastructure/http/controllers/product.controller.js';
+
+const container = createContainer()
+  .register('ProductRepository', () => createProductRepository())
+  .register('ProductService', (c) => createProductService(c.resolve('ProductRepository')));
+
+const app = await createApp({ port: 3000 });
+
+createProductController(app, container.resolve('ProductService'));
+
+app.listen(3000);
+```
+
+<Steps>
+  <Step title="Register dependencies bottom-up">
+    Start with zero-dependency services (repository), then build upward (service, controller).
+  </Step>
+
+  <Step title="Resolve when needed">
+    Call `container.resolve()` only when passing to controllers or initializing the app.
+  </Step>
+
+  <Step title="Keep registration flat">
+    Avoid deep nesting. Register all services at the top level.
+  </Step>
+</Steps>
+
+## Optional: Define events
+
+For cross-module communication, emit domain events:
+
+**src/modules/products/events/product.events.ts:**
+
+```ts
+export type ProductCreatedPayload = {
+  productId: string;
+  name: string;
+  price: number;
+};
+
+export type StockReducedPayload = {
+  productId: string;
+  newStock: number;
+  quantity: number;
+};
+
+export const productEvents = {
+  created: 'product.created',
+  stockReduced: 'product.stock_reduced',
+} as const;
+```
+
+Emit in the service:
+
+```ts
+import { productEvents } from '../../events/product.events.js';
+
+export const createProductService = (
+  repo: IProductRepository,
+  eventBus: IEventBus,
+): IProductService => ({
+  async createProduct(data) {
+    const product = await repo.create(data);
+    await eventBus.publish(productEvents.created, {
+      productId: product.id,
+      name: product.name,
+      price: product.price,
+    });
+    return Ok(product);
+  },
+});
+```
+
+<Note>
+  Event bus implementation is not included in the framework. Use a library like [mitt](https://github.com/developit/mitt) or build your own.
+</Note>
+
+## Clean Architecture recap
+
+Your module now follows Clean Architecture:
+
+<Tabs>
+  <Tab title="Dependency flow">
+    ```
+    Controller → Service → Repository
+         ↓         ↓
+       Ports     Ports
+    ```
+
+    - Controllers depend on service interfaces
+    - Services depend on repository interfaces
+    - Infrastructure implements the interfaces
+  </Tab>
+
+  <Tab title="Layer rules">
+    - **Application layer** has no framework imports (except types)
+    - **Infrastructure layer** imports from application layer
+    - **No upward dependencies** — infrastructure never flows into application
+  </Tab>
+
+  <Tab title="Testing">
+    - Mock repositories to test services
+    - Mock services to test controllers
+    - No mocking needed for application logic
+  </Tab>
+</Tabs>
+
+## Next steps
+
+- Add authentication middleware
+- Implement Zod validation schemas
+- Connect a real database (Drizzle, Prisma)
+- Add event-driven workflows
+- Write tests (see [Testing guide](/guides/testing))

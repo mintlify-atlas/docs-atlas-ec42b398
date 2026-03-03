@@ -1,0 +1,396 @@
+---
+title: Scopes and lifecycle
+description: Scoped containers and dependency lifecycle management
+---
+
+## Overview
+
+NduloJS containers support three lifecycle scopes:
+
+| Scope | Behavior |
+|---|---|
+| `singleton` (default) | Created once, reused forever |
+| `scoped` | Created once per scope (e.g. per HTTP request) |
+| `transient` | New instance on every `resolve()` |
+
+---
+
+## Singleton scope
+
+Singleton dependencies are created once and cached for the lifetime of the container. This is the default scope.
+
+```typescript
+const container = createContainer()
+  .register('Database', () => createDatabase())
+  // Explicit singleton
+  .register('Logger', () => createLogger(), 'singleton');
+
+const db1 = container.resolve('Database');
+const db2 = container.resolve('Database');
+// db1 === db2 (same instance)
+```
+
+### Use cases
+
+- Database connections
+- Configuration objects
+- Shared caches
+- Application-wide services
+
+<Note>
+  Singleton scope is the most efficient — the factory runs only once, and subsequent resolutions return the cached instance.
+</Note>
+
+---
+
+## Scoped dependencies
+
+Scoped dependencies are created once per scope. Each scope maintains its own cache for scoped dependencies while sharing singletons from the parent container.
+
+```typescript
+const container = createContainer()
+  .registerScoped('RequestContext', () => createContext())
+  .registerScoped('Session', (c) => {
+    const ctx = c.resolve('RequestContext');
+    return createSession(ctx);
+  });
+```
+
+### Use cases
+
+- Per-request context in HTTP servers
+- User sessions
+- Transaction managers
+- Request-specific loggers
+
+<Note>
+  Scoped dependencies are ideal for per-request state in web applications. Each HTTP request gets its own scope.
+</Note>
+
+---
+
+## Transient dependencies
+
+Transient dependencies are created fresh on every `resolve()` call. Nothing is cached.
+
+```typescript
+const container = createContainer()
+  .registerTransient('IdGenerator', () => createIdGenerator())
+  .registerTransient('Timestamp', () => ({ now: Date.now() }));
+
+const id1 = container.resolve('IdGenerator');
+const id2 = container.resolve('IdGenerator');
+// id1 !== id2 (new instance each time)
+```
+
+### Use cases
+
+- Stateless utilities
+- ID generators
+- Timestamp providers
+- Dependencies that must be fresh every time
+
+<Note>
+  Transient scope has the most overhead — the factory runs on every `resolve()`. Use it sparingly.
+</Note>
+
+---
+
+## createScope
+
+Create a scoped child container. Scoped dependencies resolved within this child get their own instances. Singletons are still shared from the parent.
+
+```typescript
+createScope(): ScopedContainer<TRegistry>
+```
+
+<ResponseField name="scope" type="ScopedContainer<TRegistry>">
+  A scoped container with its own cache for scoped dependencies.
+</ResponseField>
+
+### ScopedContainer API
+
+```typescript
+type ScopedContainer<TRegistry> = {
+  resolve<K extends keyof TRegistry>(token: K): TRegistry[K];
+  dispose(): void;
+};
+```
+
+<ParamField path="resolve" type="function">
+  Resolve a dependency within this scope. Scoped dependencies get their own instances, singletons are shared from parent, transients are always fresh.
+</ParamField>
+
+<ParamField path="dispose" type="function">
+  Clear the scoped cache. Call this when the scope is no longer needed (e.g. after an HTTP request completes).
+</ParamField>
+
+### Example
+
+```typescript
+const container = createContainer()
+  .register('Database', () => createDatabase())        // singleton
+  .registerScoped('RequestContext', () => createContext()) // scoped
+  .registerTransient('IdGenerator', () => createId());    // transient
+
+const scope1 = container.createScope();
+const ctx1 = scope1.resolve('RequestContext');
+const db1 = scope1.resolve('Database');
+
+const scope2 = container.createScope();
+const ctx2 = scope2.resolve('RequestContext');
+const db2 = scope2.resolve('Database');
+
+// Scoped: different instances per scope
+ctx1 !== ctx2;
+
+// Singleton: same instance across all scopes
+db1 === db2;
+
+// Clean up when done
+scope1.dispose();
+scope2.dispose();
+```
+
+---
+
+## Per-request scoping pattern
+
+A common pattern for HTTP servers is to create a scope per request:
+
+```typescript
+import { createContainer, createApp } from '@ndulojs/core';
+
+const container = createContainer()
+  .register('Database', () => createDatabase())
+  .registerScoped('RequestContext', () => ({
+    requestId: crypto.randomUUID(),
+    startTime: Date.now(),
+  }))
+  .registerScoped('Logger', (c) => {
+    const ctx = c.resolve('RequestContext');
+    return createLogger({ requestId: ctx.requestId });
+  });
+
+const app = createApp();
+
+app.use(async (req, res, next) => {
+  // Create a new scope for this request
+  const scope = container.createScope();
+  
+  // Attach to request for route handlers
+  req.scope = scope;
+  
+  try {
+    await next();
+  } finally {
+    // Clean up when request completes
+    scope.dispose();
+  }
+});
+
+app.get('/users/:id', async (req, res) => {
+  const scope = req.scope;
+  
+  // Logger has the request ID from RequestContext
+  const logger = scope.resolve('Logger');
+  logger.info('Fetching user');
+  
+  const userService = scope.resolve('UserService');
+  const user = await userService.getUser(req.params.id);
+  
+  res.json(user);
+});
+```
+
+### Benefits
+
+- Each request gets its own context and logger
+- Database connection is shared (singleton)
+- Clean separation of concerns
+- Easy to test by creating scopes in tests
+
+<Note>
+  Always call `dispose()` when a scope is no longer needed to prevent memory leaks.
+</Note>
+
+---
+
+## Scope resolution behavior
+
+When resolving from a scoped container:
+
+1. **Singleton**: Returns the cached instance from the parent container
+2. **Scoped**: Returns the cached instance from this scope's cache, or creates and caches it if not present
+3. **Transient**: Always creates a new instance (never cached)
+
+```typescript
+const container = createContainer()
+  .register('A', () => ({ type: 'singleton' }))
+  .registerScoped('B', () => ({ type: 'scoped' }))
+  .registerTransient('C', () => ({ type: 'transient' }));
+
+const scope = container.createScope();
+
+const a1 = scope.resolve('A');
+const a2 = scope.resolve('A');
+const a3 = container.resolve('A');
+// a1 === a2 === a3 (singleton shared everywhere)
+
+const b1 = scope.resolve('B');
+const b2 = scope.resolve('B');
+const b3 = container.resolve('B');
+// b1 === b2 (same scope), b1 !== b3 (different scope)
+
+const c1 = scope.resolve('C');
+const c2 = scope.resolve('C');
+// c1 !== c2 (always fresh)
+```
+
+---
+
+## dispose
+
+Clear the scoped cache. Call this when the scope is no longer needed.
+
+```typescript
+dispose(): void
+```
+
+### Example
+
+```typescript
+const scope = container.createScope();
+
+const ctx = scope.resolve('RequestContext');
+// Use ctx...
+
+scope.dispose(); // Clear scoped cache
+
+// After dispose, resolving again creates a new instance
+const ctx2 = scope.resolve('RequestContext');
+// ctx !== ctx2
+```
+
+<Note>
+  `dispose()` only clears the scoped cache. It does not affect the parent container's singleton cache.
+</Note>
+
+---
+
+## Lifecycle comparison
+
+<CodeGroup>
+```typescript Singleton
+const container = createContainer()
+  .register('Database', () => createDatabase());
+
+const db1 = container.resolve('Database');
+const db2 = container.resolve('Database');
+db1 === db2; // ✅ true
+
+const scope = container.createScope();
+const db3 = scope.resolve('Database');
+db1 === db3; // ✅ true (shared across scopes)
+```
+
+```typescript Scoped
+const container = createContainer()
+  .registerScoped('Context', () => createContext());
+
+// Main container: each resolve creates new instance
+const ctx1 = container.resolve('Context');
+const ctx2 = container.resolve('Context');
+ctx1 !== ctx2; // ✅ true
+
+// Within scope: cached
+const scope = container.createScope();
+const ctx3 = scope.resolve('Context');
+const ctx4 = scope.resolve('Context');
+ctx3 === ctx4; // ✅ true
+
+// Different scope: different instance
+const scope2 = container.createScope();
+const ctx5 = scope2.resolve('Context');
+ctx3 !== ctx5; // ✅ true
+```
+
+```typescript Transient
+const container = createContainer()
+  .registerTransient('Id', () => crypto.randomUUID());
+
+const id1 = container.resolve('Id');
+const id2 = container.resolve('Id');
+id1 !== id2; // ✅ true (always fresh)
+
+const scope = container.createScope();
+const id3 = scope.resolve('Id');
+const id4 = scope.resolve('Id');
+id3 !== id4; // ✅ true (always fresh, even in scope)
+```
+</CodeGroup>
+
+---
+
+## Testing with scopes
+
+Scopes make testing easier by providing isolated dependency instances:
+
+```typescript
+import { describe, it, expect } from 'vitest';
+import { createContainer } from '@ndulojs/core';
+
+const container = createContainer()
+  .register('Database', () => createDatabase())
+  .registerScoped('Logger', () => createLogger());
+
+describe('UserService', () => {
+  it('should isolate logger per test', () => {
+    const scope1 = container.createScope();
+    const logger1 = scope1.resolve('Logger');
+    logger1.info('Test 1');
+    scope1.dispose();
+    
+    const scope2 = container.createScope();
+    const logger2 = scope2.resolve('Logger');
+    logger2.info('Test 2');
+    scope2.dispose();
+    
+    // Each test gets its own logger instance
+    expect(logger1).not.toBe(logger2);
+  });
+  
+  it('should share database singleton', () => {
+    const scope1 = container.createScope();
+    const db1 = scope1.resolve('Database');
+    
+    const scope2 = container.createScope();
+    const db2 = scope2.resolve('Database');
+    
+    // Database is singleton, shared across scopes
+    expect(db1).toBe(db2);
+  });
+});
+```
+
+---
+
+## Choosing the right scope
+
+Use this decision tree:
+
+1. **Does it maintain state across the entire application?**
+   - Yes → `singleton` (database, config, cache)
+   
+2. **Does it need to be request-specific or context-specific?**
+   - Yes → `scoped` (request context, user session, transaction)
+   
+3. **Must it be fresh every time?**
+   - Yes → `transient` (ID generator, timestamp, random values)
+
+4. **Unsure?**
+   - Default to `singleton` for efficiency, then switch if needed
+
+<Note>
+  Most dependencies should be singletons. Only use scoped/transient when you have a specific reason.
+</Note>

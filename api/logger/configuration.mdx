@@ -1,0 +1,325 @@
+---
+title: Configuration
+description: Logger configuration options and file rotation
+---
+
+## LoggerConfig
+
+Configuration object for `createLogger()`.
+
+```typescript
+type LoggerConfig = {
+  readonly level?: LogLevel | undefined;
+  readonly dir?: string | undefined;
+  readonly pretty?: boolean | undefined;
+  readonly retainDays?: number | undefined;
+};
+```
+
+All fields are optional. Omitted fields use defaults:
+
+```typescript
+{
+  level: 'info',
+  dir: 'logs',
+  pretty: false,
+  retainDays: 30,
+}
+```
+
+---
+
+## Configuration options
+
+### level
+
+Minimum log level to emit. Logs below this level are discarded.
+
+```typescript
+level?: LogLevel
+```
+
+<ParamField path="level" type="'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'" default="'info'">
+  Minimum severity level to log.
+  
+  Levels in order of severity:
+  - `trace` - Extremely detailed debugging (function entry/exit)
+  - `debug` - Detailed debugging (variable values, intermediate states)
+  - `info` - Informational messages (normal operation)
+  - `warn` - Warning messages (degraded operation)
+  - `error` - Error messages (operation failed but recoverable)
+  - `fatal` - Fatal errors (application crash)
+</ParamField>
+
+**Example:**
+
+```typescript
+// Development - show all debug logs
+const logger = createLogger({ level: 'debug' });
+
+logger.app.trace('Function called'); // Hidden (trace < debug)
+logger.app.debug('User data:', userData); // Visible
+logger.app.info('Request processed'); // Visible
+```
+
+```typescript
+// Production - only warnings and errors
+const logger = createLogger({ level: 'warn' });
+
+logger.app.info('Server started'); // Hidden (info < warn)
+logger.app.warn('High memory usage'); // Visible
+logger.app.error('Database connection failed'); // Visible
+```
+
+<Note>
+  Setting `level: 'debug'` in production can generate excessive logs. Use `'info'` or `'warn'` in production environments.
+</Note>
+
+---
+
+### dir
+
+Root directory for log files (production mode only).
+
+```typescript
+dir?: string
+```
+
+<ParamField path="dir" type="string" default="'logs'">
+  Base directory for log file output. Only used when `pretty: false`.
+  
+  Each channel gets its own subdirectory:
+  - `{dir}/app/app.log`
+  - `{dir}/http/http.log`
+  - `{dir}/error/error.log`
+</ParamField>
+
+**Example:**
+
+```typescript
+const logger = createLogger({ dir: '/var/log/myapp' });
+
+// Creates:
+// /var/log/myapp/app/app.log
+// /var/log/myapp/http/http.log
+// /var/log/myapp/error/error.log
+```
+
+<Note>
+  The directory is created automatically if it doesn't exist. Ensure the process has write permissions.
+</Note>
+
+---
+
+### pretty
+
+Pretty-print to terminal instead of writing to files.
+
+```typescript
+pretty?: boolean
+```
+
+<ParamField path="pretty" type="boolean" default="false">
+  When `true`, logs are formatted with colours and timestamps for terminal readability.
+  
+  When `false`, logs are written as newline-delimited JSON to rotating daily files.
+</ParamField>
+
+**Development mode (`pretty: true`):**
+- Logs to stdout with colours
+- Human-readable timestamps
+- No file output
+- Channel name in brackets
+
+**Production mode (`pretty: false`):**
+- Logs to daily-rotated files
+- Newline-delimited JSON (NDJSON)
+- Structured data for log aggregation
+- Automatic rotation and retention
+
+**Example output:**
+
+<CodeGroup>
+
+```bash Pretty mode (terminal)
+[app] 14:32:11 INFO: Server started
+[http] 14:32:15 INFO: Request { method: "GET", path: "/users", statusCode: 200 }
+[error] 14:32:20 ERROR: Database query failed { error: "Connection timeout" }
+```
+
+```json Production mode (file)
+{"level":30,"time":"2026-03-03T14:32:11.123Z","channel":"app","msg":"Server started"}
+{"level":30,"time":"2026-03-03T14:32:15.456Z","channel":"http","method":"GET","path":"/users","statusCode":200,"msg":"Request"}
+{"level":50,"time":"2026-03-03T14:32:20.789Z","channel":"error","error":"Connection timeout","msg":"Database query failed"}
+```
+
+</CodeGroup>
+
+---
+
+### retainDays
+
+Maximum number of rotated log files to keep per channel.
+
+```typescript
+retainDays?: number
+```
+
+<ParamField path="retainDays" type="number" default="30">
+  Number of daily log files to retain before automatic deletion. Only used when `pretty: false`.
+  
+  Older files are deleted automatically during rotation.
+</ParamField>
+
+**Example:**
+
+```typescript
+const logger = createLogger({ retainDays: 14 });
+
+// After 14 days, old logs are deleted:
+// logs/app/app.2026-02-17.log  <- deleted on 2026-03-04
+// logs/app/app.2026-02-18.log  <- kept (within 14 days)
+```
+
+<Note>
+  Set lower retention for high-volume applications to save disk space. Set higher retention for compliance requirements.
+</Note>
+
+---
+
+## Daily rotation
+
+When `pretty: false`, logs are automatically rotated daily at midnight (local time).
+
+### Rotation behaviour
+
+1. **Current logs** write to `{channel}.log`
+2. **At midnight**, current file is renamed to `{channel}.YYYY-MM-DD.log`
+3. **New file** `{channel}.log` is created for the new day
+4. **Old files** beyond `retainDays` are deleted
+
+### File naming
+
+```
+logs/
+  app/
+    app.log              # Current day (actively written)
+    app.2026-03-02.log   # Yesterday
+    app.2026-03-01.log   # Two days ago
+    app.2026-02-29.log   # Three days ago
+    ...                  # Up to retainDays files
+  http/
+    http.log
+    http.2026-03-02.log
+    ...
+  error/
+    error.log
+    error.2026-03-02.log
+    ...
+```
+
+### Multiple restarts per day
+
+If your application restarts multiple times in a day, rotated files get sequential numbers:
+
+```
+logs/app/app.2026-03-02.1.log  # First rotation
+logs/app/app.2026-03-02.2.log  # Second rotation (same day)
+logs/app/app.2026-03-02.3.log  # Third rotation (same day)
+```
+
+This prevents data loss when the application restarts.
+
+---
+
+## Configuration examples
+
+<CodeGroup>
+
+```typescript Development
+import { createLogger } from '@ndulojs/core';
+
+const logger = createLogger({
+  pretty: true,      // Coloured terminal output
+  level: 'debug',    // Show debug logs
+});
+
+// Logs appear in terminal with colours
+logger.app.debug('Starting server...');
+logger.app.info('Server ready');
+```
+
+```typescript Production
+import { createLogger } from '@ndulojs/core';
+
+const logger = createLogger({
+  pretty: false,     // JSON file output
+  level: 'info',     // Hide debug logs
+  dir: '/var/log/myapp',
+  retainDays: 14,    // 2 weeks retention
+});
+
+// Logs written to /var/log/myapp/{app,http,error}/
+logger.app.info('Server started');
+logger.http.info({ method: 'GET', statusCode: 200 }, 'Request');
+```
+
+```typescript Staging
+import { createLogger } from '@ndulojs/core';
+
+const logger = createLogger({
+  pretty: false,
+  level: 'debug',    // More verbose for debugging
+  dir: './logs',     // Local directory
+  retainDays: 7,     // Shorter retention
+});
+
+logger.app.debug({ config }, 'Loaded configuration');
+```
+
+```typescript High-volume production
+import { createLogger } from '@ndulojs/core';
+
+const logger = createLogger({
+  pretty: false,
+  level: 'warn',     // Only warnings and errors
+  dir: '/mnt/logs',  // Separate disk mount
+  retainDays: 3,     // Short retention (high volume)
+});
+
+// Only critical logs are written
+logger.app.info('Server started');  // Hidden
+logger.app.warn('High memory usage'); // Written
+logger.error.error({ error }, 'Database connection lost'); // Written
+```
+
+</CodeGroup>
+
+---
+
+## Environment-based configuration
+
+Configure logging based on `NODE_ENV`:
+
+```typescript
+import { createLogger, type LoggerConfig } from '@ndulojs/core';
+
+const config: LoggerConfig = {
+  level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+  pretty: process.env.NODE_ENV !== 'production',
+  dir: process.env.LOG_DIR ?? '/var/log/myapp',
+  retainDays: parseInt(process.env.LOG_RETENTION_DAYS ?? '30', 10),
+};
+
+const logger = createLogger(config);
+```
+
+**Environment variables:**
+
+- `NODE_ENV=production` - Use production config (JSON files, info level)
+- `LOG_DIR=/custom/path` - Override log directory
+- `LOG_RETENTION_DAYS=14` - Override retention period
+
+<Note>
+  Always use `pretty: false` in production to enable file output and log rotation.
+</Note>

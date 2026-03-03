@@ -1,0 +1,249 @@
+---
+title: ndulo generate
+description: Generate complete modules with Clean Architecture layers
+---
+
+The `ndulo generate module` command creates a full Clean Architecture module structure with all layers, files, and dependency injection wiring.
+
+## Usage
+
+```bash
+ndulo generate module <name> [--sub <name>]
+```
+
+### Arguments
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<name>` | Yes | Module name (accepts any case, auto-pluralized) |
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--sub <name>` | Generate as a submodule under the parent module |
+
+## Examples
+
+### Generate a standard module
+
+```bash
+ndulo generate module farms
+```
+
+**Output:**
+```bash
+✓ Module "farms" created
+
+Files created:
+  src/modules/farms/events/farm.events.ts
+  src/modules/farms/application/dtos/farm.dto.ts
+  src/modules/farms/application/ports/farm.port.ts
+  src/modules/farms/application/services/farm.service.ts
+  src/modules/farms/infrastructure/persistence/farm.repository.ts
+  src/modules/farms/infrastructure/http/controllers/farm.controller.ts
+  src/modules/farms/farm.module.ts
+```
+
+### Generated file structure
+
+```
+src/modules/farms/
+├── events/
+│   └── farm.events.ts              # Domain events
+├── application/
+│   ├── dtos/
+│   │   └── farm.dto.ts             # Data transfer objects
+│   ├── ports/
+│   │   └── farm.port.ts            # Interfaces
+│   └── services/
+│       └── farm.service.ts         # Business logic
+├── infrastructure/
+│   ├── persistence/
+│   │   └── farm.repository.ts      # Data access
+│   └── http/
+│       └── controllers/
+│           └── farm.controller.ts  # HTTP handlers
+└── farm.module.ts                  # DI registration
+```
+
+### Generate a submodule
+
+```bash
+ndulo generate module farms --sub members
+```
+
+**Output:**
+```bash
+✓ Module "farms/members" created
+
+Files created:
+  src/modules/farms/members/application/dtos/member.dto.ts
+  src/modules/farms/members/application/ports/member.port.ts
+  src/modules/farms/members/application/services/member.service.ts
+  src/modules/farms/members/infrastructure/persistence/member.repository.ts
+  src/modules/farms/members/infrastructure/http/controllers/member.controller.ts
+```
+
+<Note>
+Submodules are nested under the parent module directory and do not include `events` or root module files.
+</Note>
+
+## Generated file contents
+
+<AccordionGroup>
+  <Accordion title="farm.events.ts">
+    Domain event definitions:
+
+    ```typescript
+    export type FarmEventPayload = Record<string, unknown>;
+
+    export const farmEvents = {} as const;
+    ```
+  </Accordion>
+
+  <Accordion title="farm.dto.ts">
+    Data transfer objects with TypeScript types:
+
+    ```typescript
+    export type CreateFarmDTO = Record<string, unknown>;
+    export type UpdateFarmDTO = Partial<CreateFarmDTO>;
+    export type FarmResponseDTO = { id: string };
+    ```
+  </Accordion>
+
+  <Accordion title="farm.port.ts">
+    Port interfaces for dependency inversion:
+
+    ```typescript
+    import type { Result, AppError } from 'ndulojs';
+    import type { CreateFarmDTO, FarmResponseDTO } from '../dtos/farm.dto.js';
+
+    export interface IFarmRepository {}
+
+    export interface IFarmService {}
+    ```
+  </Accordion>
+
+  <Accordion title="farm.service.ts">
+    Service implementation with repository dependency:
+
+    ```typescript
+    import type { IFarmRepository, IFarmService } from '../ports/farm.port.js';
+
+    export const createFarmService = (repo: IFarmRepository): IFarmService => ({});
+    ```
+  </Accordion>
+
+  <Accordion title="farm.repository.ts">
+    Repository implementation:
+
+    ```typescript
+    import type { IFarmRepository } from '../../application/ports/farm.port.js';
+
+    export const createFarmRepository = (): IFarmRepository => ({});
+    ```
+  </Accordion>
+
+  <Accordion title="farm.controller.ts">
+    HTTP controller with route group:
+
+    ```typescript
+    import type { IHttpAdapter } from 'ndulojs';
+    import type { IFarmService } from '../../../application/ports/farm.port.js';
+
+    export const createFarmController = (app: IHttpAdapter, service: IFarmService): void => {
+      app.group('/farms', (router) => {
+        // define routes here
+      });
+    };
+    ```
+  </Accordion>
+
+  <Accordion title="farm.module.ts">
+    Module registration with DI wiring:
+
+    ```typescript
+    import type { IHttpAdapter } from 'ndulojs';
+    import { createFarmRepository } from './infrastructure/persistence/farm.repository.js';
+    import { createFarmService } from './application/services/farm.service.js';
+    import { createFarmController } from './infrastructure/http/controllers/farm.controller.js';
+
+    export const registerFarmModule = (app: IHttpAdapter): void => {
+      const repo = createFarmRepository();
+      const service = createFarmService(repo);
+      createFarmController(app, service);
+    };
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Registering the module
+
+After generation, register the module in `src/index.ts`:
+
+<Steps>
+  <Step title="Import the module">
+    ```typescript
+    import { registerFarmModule } from './modules/farms/farm.module.js';
+    ```
+  </Step>
+
+  <Step title="Register with the app">
+    ```typescript
+    const app = await createApp({ port: 3000 });
+    registerFarmModule(app);
+    ```
+  </Step>
+
+  <Step title="Start the server">
+    ```bash
+    bun dev
+    ```
+
+    Your module routes are now available at `/farms/*`
+  </Step>
+</Steps>
+
+## Overwrite behavior
+
+If the module already exists:
+
+```bash
+ndulo generate module farms
+```
+
+**Output:**
+```bash
+Module "farms" already exists. Overwrite? (y/N)
+```
+
+<Tip>
+- Type `y` to replace all files
+- Type `n` to cancel and preserve existing code
+- Use `ndulo add` to add individual files instead
+</Tip>
+
+## Name transformations
+
+The CLI automatically handles pluralization and case conversions:
+
+```bash
+# All these generate the same structure:
+ndulo generate module farm
+ndulo generate module farms
+ndulo generate module Farm
+ndulo generate module FARMS
+```
+
+Multi-word names are normalized:
+
+```bash
+ndulo generate module cropCycles
+# → src/modules/crop-cycles/
+# → cropCycle.service.ts
+
+ndulo generate module farm-members
+# → src/modules/farm-members/
+# → farmMember.service.ts
+```

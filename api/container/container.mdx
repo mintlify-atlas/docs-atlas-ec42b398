@@ -1,0 +1,428 @@
+---
+title: Container API
+description: Core dependency injection container methods
+---
+
+## createContainer
+
+Creates a new dependency injection container.
+
+Functional, no decorators, no metadata reflection. Type-safe — `resolve()` infers the correct return type from the registry.
+
+```typescript
+const createContainer = <
+  TRegistry extends RegistryConstraint = Record<never, never>,
+>(): Container<TRegistry>
+```
+
+<ParamField path="TRegistry" type="RegistryConstraint" default="Record<never, never>">
+  Type parameter mapping tokens to their value types. Inferred automatically as you register dependencies.
+</ParamField>
+
+<ResponseField name="container" type="Container<TRegistry>">
+  A new container instance with type-safe registration and resolution.
+</ResponseField>
+
+### Example
+
+```typescript
+import { createContainer } from '@ndulojs/core';
+
+const container = createContainer()
+  .register('Config', () => loadConfig())
+  .register('Database', (c) => createDatabase(c.resolve('Config')))
+  .register('UserRepository', (c) => createUserRepository(c.resolve('Database')))
+  .register('UserService', (c) => createUserService(c.resolve('UserRepository')));
+
+const userService = container.resolve('UserService');
+// TypeScript knows the exact type — no casting needed
+```
+
+---
+
+## register
+
+Register a dependency with a factory function. Default scope is singleton.
+
+```typescript
+register<K extends Token, V>(
+  token: K,
+  factory: Factory<V, TRegistry & Record<K, V>>,
+  scope?: Scope,
+): Container<TRegistry & Record<K, V>>
+```
+
+<ParamField path="token" type="string" required>
+  The key used to identify this dependency. Must be unique within the container.
+</ParamField>
+
+<ParamField path="factory" type="Factory<V, TRegistry & Record<K, V>>" required>
+  A function that receives the container and returns the dependency instance. Use the container parameter to resolve other dependencies.
+</ParamField>
+
+<ParamField path="scope" type="Scope" default="'singleton'">
+  The lifecycle scope: `'singleton'`, `'scoped'`, or `'transient'`.
+</ParamField>
+
+<ResponseField name="container" type="Container<TRegistry & Record<K, V>>">
+  Returns the container with extended type registry for fluent chaining.
+</ResponseField>
+
+### Example
+
+```typescript
+const container = createContainer()
+  .register('Logger', () => createLogger())
+  .register('Database', (c) => {
+    const logger = c.resolve('Logger');
+    return createDatabase({ logger });
+  }, 'singleton');
+```
+
+<Note>
+  The factory receives a container that can only `resolve()` — it cannot register new dependencies. This prevents accidental registration inside factories.
+</Note>
+
+---
+
+## registerClass
+
+Register a class constructor as a dependency. The class will be instantiated with `new` when resolved.
+
+```typescript
+registerClass<K extends Token, V>(
+  token: K,
+  constructor: Constructor<V>,
+  scope?: Scope,
+): Container<TRegistry & Record<K, V>>
+```
+
+<ParamField path="token" type="string" required>
+  The key used to identify this dependency.
+</ParamField>
+
+<ParamField path="constructor" type="Constructor<V>" required>
+  A class constructor function. Will be called with `new` during resolution.
+</ParamField>
+
+<ParamField path="scope" type="Scope" default="'singleton'">
+  The lifecycle scope: `'singleton'`, `'scoped'`, or `'transient'`.
+</ParamField>
+
+<ResponseField name="container" type="Container<TRegistry & Record<K, V>>">
+  Returns the container with extended type registry.
+</ResponseField>
+
+### Example
+
+```typescript
+class UserService {
+  constructor() {
+    // Initialization logic
+  }
+  
+  async getUser(id: string) {
+    // ...
+  }
+}
+
+const container = createContainer()
+  .registerClass('UserService', UserService);
+
+const service = container.resolve('UserService');
+// service is of type UserService
+```
+
+---
+
+## registerScoped
+
+Register a scoped dependency (shorthand for `scope: 'scoped'`). Scoped dependencies are resolved fresh per scope context.
+
+```typescript
+registerScoped<K extends Token, V>(
+  token: K,
+  factory: Factory<V, TRegistry & Record<K, V>>,
+): Container<TRegistry & Record<K, V>>
+```
+
+<ParamField path="token" type="string" required>
+  The key used to identify this dependency.
+</ParamField>
+
+<ParamField path="factory" type="Factory<V, TRegistry & Record<K, V>>" required>
+  A function that receives the container and returns the dependency instance.
+</ParamField>
+
+<ResponseField name="container" type="Container<TRegistry & Record<K, V>>">
+  Returns the container with extended type registry.
+</ResponseField>
+
+### Example
+
+```typescript
+const container = createContainer()
+  .registerScoped('RequestContext', () => createContext());
+
+// Each scope gets its own instance
+const scope1 = container.createScope();
+const ctx1 = scope1.resolve('RequestContext');
+
+const scope2 = container.createScope();
+const ctx2 = scope2.resolve('RequestContext');
+// ctx1 !== ctx2
+```
+
+---
+
+## registerTransient
+
+Register a transient dependency (shorthand for `scope: 'transient'`). Transient dependencies are created fresh on every `resolve()`.
+
+```typescript
+registerTransient<K extends Token, V>(
+  token: K,
+  factory: Factory<V, TRegistry & Record<K, V>>,
+): Container<TRegistry & Record<K, V>>
+```
+
+<ParamField path="token" type="string" required>
+  The key used to identify this dependency.
+</ParamField>
+
+<ParamField path="factory" type="Factory<V, TRegistry & Record<K, V>>" required>
+  A function that receives the container and returns the dependency instance.
+</ParamField>
+
+<ResponseField name="container" type="Container<TRegistry & Record<K, V>>">
+  Returns the container with extended type registry.
+</ResponseField>
+
+### Example
+
+```typescript
+const container = createContainer()
+  .registerTransient('IdGenerator', () => createIdGenerator());
+
+const id1 = container.resolve('IdGenerator');
+const id2 = container.resolve('IdGenerator');
+// id1 !== id2 (new instance each time)
+```
+
+<Note>
+  Use transient scope for stateless utilities or when you explicitly need a new instance every time.
+</Note>
+
+---
+
+## resolve
+
+Resolve a registered dependency by its token. Returns the dependency instance with full type inference.
+
+```typescript
+resolve<K extends keyof TRegistry>(token: K): TRegistry[K]
+```
+
+<ParamField path="token" type="keyof TRegistry" required>
+  The token of the dependency to resolve. Must have been previously registered.
+</ParamField>
+
+<ResponseField name="value" type="TRegistry[K]">
+  The resolved dependency instance. Type is automatically inferred from the registry.
+</ResponseField>
+
+### Example
+
+```typescript
+const container = createContainer()
+  .register('Config', () => ({ port: 3000 }))
+  .register('Database', (c) => createDb(c.resolve('Config')));
+
+const db = container.resolve('Database');
+// TypeScript infers the exact type of db
+```
+
+### Error handling
+
+Throws `NotRegisteredError` if the token hasn't been registered:
+
+```typescript
+try {
+  const service = container.resolve('UnknownService');
+} catch (error) {
+  // NotRegisteredError: Token "UnknownService" has not been registered.
+  // Did you forget to call container.register("UnknownService", ...)?
+}
+```
+
+Throws `CircularDependencyError` if a circular dependency is detected:
+
+```typescript
+// A depends on B, B depends on C, C depends on A
+const container = createContainer()
+  .register('A', (c) => ({ b: c.resolve('B') }))
+  .register('B', (c) => ({ c: c.resolve('C') }))
+  .register('C', (c) => ({ a: c.resolve('A') }));
+
+try {
+  container.resolve('A');
+} catch (error) {
+  // CircularDependencyError: Circular dependency detected: A → B → C → A
+  // "A" depends on something that eventually depends on itself.
+}
+```
+
+<Note>
+  Circular dependency detection happens at resolution time, not registration time. The container tracks the resolution stack to detect cycles.
+</Note>
+
+---
+
+## has
+
+Check if a token has been registered in the container.
+
+```typescript
+has(token: Token): boolean
+```
+
+<ParamField path="token" type="string" required>
+  The token to check for registration.
+</ParamField>
+
+<ResponseField name="registered" type="boolean">
+  `true` if the token has been registered, `false` otherwise.
+</ResponseField>
+
+### Example
+
+```typescript
+const container = createContainer()
+  .register('Logger', () => createLogger());
+
+container.has('Logger');        // true
+container.has('Database');      // false
+
+if (!container.has('Cache')) {
+  container.register('Cache', () => createCache());
+}
+```
+
+---
+
+## reset
+
+Reset all singleton instances. Useful for testing — clears the singleton cache so factories run again on next resolve.
+
+```typescript
+reset(): void
+```
+
+### Example
+
+```typescript
+const container = createContainer()
+  .register('Database', () => createDatabase());
+
+const db1 = container.resolve('Database');
+container.reset();
+const db2 = container.resolve('Database');
+// db1 !== db2 (factory ran again after reset)
+```
+
+<Note>
+  `reset()` only clears the singleton cache. It does not remove registrations or affect scoped/transient dependencies.
+</Note>
+
+### Testing example
+
+```typescript
+import { describe, it, beforeEach } from 'vitest';
+
+const container = createContainer()
+  .register('Database', () => createDatabase());
+
+describe('UserService', () => {
+  beforeEach(() => {
+    container.reset(); // Fresh singletons for each test
+  });
+  
+  it('should fetch users', async () => {
+    const service = container.resolve('UserService');
+    const users = await service.getUsers();
+    expect(users).toHaveLength(2);
+  });
+});
+```
+
+---
+
+## Type safety
+
+The container provides full type inference without decorators or reflection:
+
+<CodeGroup>
+```typescript Type inference
+const container = createContainer()
+  .register('Config', () => ({ port: 3000 }))
+  .register('Logger', () => createLogger());
+
+// TypeScript knows the exact return type
+const config = container.resolve('Config');
+// config: { port: number }
+
+const logger = container.resolve('Logger');
+// logger: Logger
+```
+
+```typescript Type errors
+const container = createContainer()
+  .register('Config', () => ({ port: 3000 }));
+
+// TypeScript error: Argument of type '"Database"' is not
+// assignable to parameter of type '"Config"'
+const db = container.resolve('Database');
+```
+
+```typescript Fluent chaining
+const container = createContainer()
+  .register('A', () => 'a')
+  .register('B', (c) => c.resolve('A') + 'b')
+  .register('C', (c) => c.resolve('B') + 'c');
+
+// Each register() returns a properly typed container
+// so dependencies are available in subsequent factories
+```
+</CodeGroup>
+
+---
+
+## Factory pattern
+
+Factory functions receive a resolver-only container to prevent registration inside factories:
+
+```typescript
+type Factory<T, TRegistry> = (container: ResolverContainer<TRegistry>) => T;
+
+type ResolverContainer<TRegistry> = {
+  resolve<K extends keyof TRegistry>(token: K): TRegistry[K];
+};
+```
+
+This design ensures dependencies are registered only at the application entry point, not scattered throughout factory functions.
+
+### Example
+
+```typescript
+const container = createContainer()
+  .register('Database', (c) => {
+    // ✅ Can resolve dependencies
+    const config = c.resolve('Config');
+    
+    // ❌ Cannot register new dependencies
+    // c.register('Cache', () => createCache());
+    // TypeScript error: Property 'register' does not exist
+    
+    return createDatabase(config);
+  });
+```

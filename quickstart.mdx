@@ -1,80 +1,351 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Build your first NduloJS API endpoint in under 5 minutes
 ---
 
-## Get started in three steps
+# Quickstart
 
-Get your documentation site running locally and make your first customization.
+Let's build a complete user API with authentication, demonstrating NduloJS's Result pattern, dependency injection, and Clean Architecture in action.
 
-### Step 1: Set up your local environment
+<Note>
+  This guide uses real code from the NduloJS starter app example. You'll learn the core patterns by building a working feature.
+</Note>
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+## Create your app
+
+<Steps>
+
+<Step title="Initialize the project">
+
+Create a new NduloJS application:
+
+```bash
+npx ndulojs create my-api
+cd my-api
+bun install
+```
+
+This scaffolds a complete project with Clean Architecture structure.
+
+</Step>
+
+<Step title="Understand the structure">
+
+Your project now has this structure:
+
+```
+my-api/
+├── src/
+│   ├── modules/
+│   │   └── users/
+│   │       ├── application/
+│   │       │   ├── dtos/user.dto.ts
+│   │       │   ├── ports/user.port.ts
+│   │       │   └── services/user.service.ts
+│   │       └── infrastructure/
+│   │           ├── http/controllers/user.controller.ts
+│   │           └── persistence/user.repository.ts
+│   └── index.ts
+└── package.json
+```
+
+<Tip>
+  Each module is self-contained with its own application logic (services, DTOs, ports) and infrastructure (controllers, repositories).
+</Tip>
+
+</Step>
+
+<Step title="Explore the entry point">
+
+Open `src/index.ts` to see how everything wires together:
+
+```typescript src/index.ts
+import { createApp, createContainer, Ok } from 'ndulojs';
+import { createUserRepository } from './modules/users/infrastructure/persistence/user.repository.js';
+import { createUserService } from './modules/users/application/services/user.service.js';
+import { createUserController } from './modules/users/infrastructure/http/controllers/user.controller.js';
+
+const PORT = Number(process.env['PORT']) || 3000;
+
+// Set up dependency injection
+const container = createContainer()
+  .register('UserRepository', () => createUserRepository())
+  .register('UserService',    (c) => createUserService(c.resolve('UserRepository')));
+
+// Create HTTP app
+const app = await createApp({
+  port: PORT,
+  cors: { origins: '*' },
+  logger: { enabled: true, level: 'info' },
+});
+
+// Health check endpoint
+app.get('/health', () => Ok({ status: 'ok' }));
+
+// Register user routes
+createUserController(app, container.resolve('UserService'));
+
+app.listen(PORT);
+```
+
+Key concepts:
+- **Container**: Manages dependencies with type-safe resolution
+- **Factories**: Pure functions that create service instances
+- **Result pattern**: The health check returns `Ok(value)` instead of throwing
+
+</Step>
+
+</Steps>
+
+## Understanding the Result pattern
+
+Let's examine how the user service handles errors with typed Results:
+
+```typescript user.service.ts
+import { Ok, Err, ErrorFactory } from 'ndulojs';
+import type { Result, AppError } from 'ndulojs';
+
+export const createUserService = (repo: IUserRepository): IUserService => ({
+  async register({ email, password, name }: RegisterDTO): Promise<Result<AuthResponseDTO, AppError>> {
+    // Check if user already exists
+    const existing = await repo.findByEmail(email);
+    if (existing) return Err(ErrorFactory.conflict('Email already in use', 'email'));
+
+    // Create new user
+    const passwordHash = await hash(password);
+    const user = await repo.create({ email, password, name, passwordHash });
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    // Return success with token
+    return Ok({ user, token: signToken(user.id) });
+  },
 
-### Step 2: Deploy your changes
+  async login({ email, password }: LoginDTO): Promise<Result<AuthResponseDTO, AppError>> {
+    const record = await repo.findByEmail(email);
+    if (!record) return Err(ErrorFactory.unauthorized('Invalid credentials', 'invalid_credentials'));
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    const valid = await verify(record.passwordHash, password);
+    if (!valid) return Err(ErrorFactory.unauthorized('Invalid credentials', 'invalid_credentials'));
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    const { passwordHash: _, ...user } = record;
+    return Ok({ user, token: signToken(user.id) });
+  },
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+  async me(userId: string): Promise<Result<UserDTO, AppError>> {
+    const user = await repo.findById(userId);
+    if (!user) return Err(ErrorFactory.notFound('User not found', 'User', userId));
+    return Ok(user);
+  },
+});
+```
 
-### Step 3: Go live
+<Warning>
+  Notice there's no try/catch. Errors are explicit return values using `Err(ErrorFactory.xxx())`. The framework automatically maps these to HTTP status codes.
+</Warning>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+Error mapping:
+- `ErrorFactory.conflict()` → 409 Conflict
+- `ErrorFactory.unauthorized()` → 401 Unauthorized  
+- `ErrorFactory.notFound()` → 404 Not Found
+
+## The controller layer
+
+Controllers receive the HTTP adapter and services, then define routes:
+
+```typescript user.controller.ts
+import { Err, ErrorFactory } from 'ndulojs';
+import type { IHttpAdapter } from 'ndulojs';
+import type { IUserService } from '../../../application/ports/user.port.js';
+import { verifyToken } from '../../../application/services/user.service.js';
+
+export const createUserController = (app: IHttpAdapter, service: IUserService): void => {
+  app.group('/users', (r) => {
+    r.post('/register', async ({ body }) => {
+      const { email, password, name } = body as { email: string; password: string; name: string };
+      return service.register({ email, password, name });
+    });
+
+    r.post('/login', async ({ body }) => {
+      const { email, password } = body as { email: string; password: string };
+      return service.login({ email, password });
+    });
+
+    r.get('/me', async ({ headers }) => {
+      const token = headers['authorization']?.replace('Bearer ', '');
+      if (!token) return Err(ErrorFactory.unauthorized('Missing token', 'missing_token'));
+
+      const userId = verifyToken(token);
+      if (!userId) return Err(ErrorFactory.unauthorized('Invalid token', 'invalid_token'));
+
+      return service.me(userId);
+    });
+  });
+};
+```
+
+<Tip>
+  Controllers are thin — they just parse requests and call services. All business logic lives in the service layer.
+</Tip>
+
+## Defining ports (interfaces)
+
+Ports define contracts between layers:
+
+```typescript user.port.ts
+import type { Result, AppError } from 'ndulojs';
+import { AuthResponseDTO, LoginDTO, RegisterDTO, UserDTO } from '../dtos/user.dto';
+
+export interface IUserRepository {
+  findByEmail(email: string): Promise<(UserDTO & { passwordHash: string }) | null>;
+  findById(id: string): Promise<UserDTO | null>;
+  create(data: RegisterDTO & { passwordHash: string }): Promise<UserDTO>;
+}
+
+export interface IUserService {
+  register(data: RegisterDTO): Promise<Result<AuthResponseDTO, AppError>>;
+  login(data: LoginDTO): Promise<Result<AuthResponseDTO, AppError>>;
+  me(userId: string): Promise<Result<UserDTO, AppError>>;
+}
+```
+
+Notice that services return `Result<T, AppError>` — this makes error handling explicit in the type system.
+
+## Run your app
+
+<Steps>
+
+<Step title="Start the development server">
+
+```bash
+bun dev
+```
+
+You should see:
+
+```
+Server running on http://localhost:3000
+```
+
+</Step>
+
+<Step title="Test user registration">
+
+```bash
+curl -X POST http://localhost:3000/users/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "alice@example.com",
+    "password": "secret123",
+    "name": "Alice"
+  }'
+```
+
+Response:
+
+```json
+{
+  "user": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "email": "alice@example.com",
+    "name": "Alice",
+    "createdAt": "2026-03-03T10:30:00.000Z"
+  },
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+</Step>
+
+<Step title="Test user login">
+
+```bash
+curl -X POST http://localhost:3000/users/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "alice@example.com",
+    "password": "secret123"
+  }'
+```
+
+</Step>
+
+<Step title="Test authenticated endpoint">
+
+Use the token from registration/login:
+
+```bash
+curl http://localhost:3000/users/me \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE"
+```
+
+Response:
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "alice@example.com",
+  "name": "Alice",
+  "createdAt": "2026-03-03T10:30:00.000Z"
+}
+```
+
+</Step>
+
+</Steps>
+
+## Add a new module
+
+Let's add a new feature using the CLI:
+
+```bash
+ndulo generate module posts
+```
+
+This creates:
+
+```
+src/modules/posts/
+├── events/post.events.ts
+├── application/
+│   ├── dtos/post.dto.ts
+│   ├── ports/post.port.ts
+│   └── services/post.service.ts
+└── infrastructure/
+    ├── persistence/post.repository.ts
+    └── http/controllers/post.controller.ts
+```
+
+<Tip>
+  The CLI scaffolds the complete Clean Architecture structure. You just fill in the business logic.
+</Tip>
+
+## Key takeaways
+
+You've learned:
+
+1. **Result pattern**: Return `Ok(value)` or `Err(error)` instead of throwing exceptions
+2. **Dependency injection**: Use `createContainer()` to manage dependencies with type safety
+3. **Clean Architecture**: Separate application logic (services) from infrastructure (controllers, repositories)
+4. **Error handling**: Use `ErrorFactory` to create typed errors that automatically map to HTTP status codes
+5. **CLI scaffolding**: Generate modules with `ndulo generate module <name>`
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
+Dive deeper into NduloJS concepts:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Result pattern" icon="check-circle" href="/concepts/result-pattern">
+    Master typed error handling with Result types
+  </Card>
+  
+  <Card title="Dependency injection" icon="box" href="/concepts/dependency-injection">
+    Learn advanced container features and scoping
+  </Card>
+  
+  <Card title="HTTP adapter" icon="globe" href="/concepts/http-adapter">
+    Explore routing, middleware, and request handling
+  </Card>
+  
+  <Card title="CLI reference" icon="terminal" href="/cli/overview">
+    Complete guide to scaffolding and code generation
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

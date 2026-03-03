@@ -1,0 +1,354 @@
+---
+title: Logger
+description: Create and use the NduloJS logger suite
+---
+
+## createLogger
+
+Creates the full NduloJS logger suite with three channels (app, http, error) and a context helper for request-scoped logging.
+
+```typescript
+function createLogger(config?: LoggerConfig): LoggerSuite
+```
+
+<ParamField path="config" type="LoggerConfig">
+  Optional configuration object. See [configuration](/api/logger/configuration) for all options.
+  
+  Defaults:
+  - `level`: `'info'`
+  - `dir`: `'logs'`
+  - `pretty`: `false`
+  - `retainDays`: `30`
+</ParamField>
+
+<ResponseField name="LoggerSuite" type="object">
+  Object containing three logger channels and a context helper.
+  
+  <ResponseField name="app" type="NduloLogger">
+    General application logs (startup, shutdown, business logic)
+  </ResponseField>
+  
+  <ResponseField name="http" type="NduloLogger">
+    HTTP request/response logs (requests, responses, latency)
+  </ResponseField>
+  
+  <ResponseField name="error" type="NduloLogger">
+    Error logs (exceptions, failures, stack traces)
+  </ResponseField>
+  
+  <ResponseField name="context" type="(ctx: LogContext) => { app, http, error }">
+    Creates request-scoped loggers with bound context fields
+  </ResponseField>
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Development
+import { createLogger } from '@ndulojs/core';
+
+// Pretty print to terminal with debug level
+const logger = createLogger({ 
+  pretty: true, 
+  level: 'debug' 
+});
+
+logger.app.info('Server started');
+logger.app.debug({ port: 3000 }, 'Listening on port');
+```
+
+```typescript Production
+import { createLogger } from '@ndulojs/core';
+
+// JSON files with daily rotation
+const logger = createLogger({ 
+  dir: '/var/log/myapp',
+  retainDays: 14 
+});
+
+logger.app.info('Server started');
+logger.http.info({ method: 'GET', path: '/users', statusCode: 200 }, 'Request');
+logger.error.error({ error: err.message }, 'Unhandled exception');
+```
+
+```typescript Request-scoped logging
+import { createLogger } from '@ndulojs/core';
+
+const logger = createLogger();
+
+// In your request handler
+app.use((req, res, next) => {
+  const requestId = crypto.randomUUID();
+  const log = logger.context({ 
+    requestId, 
+    method: req.method, 
+    path: req.path 
+  });
+  
+  // All logs include requestId, method, path
+  log.http.info('Request received');
+  log.app.info('Processing payment');
+  log.error.error({ error: err.message }, 'Payment failed');
+  
+  next();
+});
+```
+
+</CodeGroup>
+
+---
+
+## LoggerSuite
+
+The object returned by `createLogger()` containing three channels and a context helper.
+
+```typescript
+type LoggerSuite = {
+  readonly app: NduloLogger;
+  readonly http: NduloLogger;
+  readonly error: NduloLogger;
+  readonly context: (ctx: LogContext) => {
+    app: NduloLogger;
+    http: NduloLogger;
+    error: NduloLogger;
+  };
+};
+```
+
+<ParamField path="app" type="NduloLogger">
+  Application logger for general business logic and lifecycle events.
+  
+  Use for:
+  - Server startup/shutdown
+  - Database connections
+  - Background jobs
+  - Business logic flow
+</ParamField>
+
+<ParamField path="http" type="NduloLogger">
+  HTTP logger for request/response events.
+  
+  Use for:
+  - Incoming requests
+  - Response status codes
+  - Request latency
+  - API calls
+</ParamField>
+
+<ParamField path="error" type="NduloLogger">
+  Error logger for exceptions and failures.
+  
+  Use for:
+  - Unhandled exceptions
+  - Validation failures
+  - External service errors
+  - Critical failures
+</ParamField>
+
+<ParamField path="context" type="(ctx: LogContext) => { app, http, error }">
+  Creates child loggers with bound context fields. All subsequent logs will include the bound context.
+  
+  <ParamField path="ctx" type="LogContext">
+    Context object with fields to bind. Common fields:
+    - `requestId` - Unique request identifier
+    - `userId` - Authenticated user ID
+    - `traceId` - Distributed trace ID
+    - `service` - Service name
+    - `component` - Component name
+    
+    Plus any custom fields (string, number, or boolean values).
+  </ParamField>
+</ParamField>
+
+### Channel separation
+
+In production mode (`pretty: false`), each channel writes to its own directory:
+
+```
+logs/
+  app/
+    app.log              # Current app logs
+    app.2026-03-02.log   # Yesterday's logs
+    app.2026-03-01.log   # Two days ago
+  http/
+    http.log
+    http.2026-03-02.log
+  error/
+    error.log
+    error.2026-03-02.log
+```
+
+This separation allows you to:
+- Monitor HTTP traffic independently
+- Alert on error logs only
+- Set different retention policies per channel
+- Analyse request patterns without business logic noise
+
+---
+
+## NduloLogger
+
+A thin wrapper around Pino with normalised method signatures.
+
+```typescript
+type NduloLogger = {
+  readonly trace: (obj: LogContext | string, msg?: string) => void;
+  readonly debug: (obj: LogContext | string, msg?: string) => void;
+  readonly info: (obj: LogContext | string, msg?: string) => void;
+  readonly warn: (obj: LogContext | string, msg?: string) => void;
+  readonly error: (obj: LogContext | string, msg?: string) => void;
+  readonly fatal: (obj: LogContext | string, msg?: string) => void;
+  readonly child: (context: LogContext) => NduloLogger;
+  readonly pino: Logger;
+};
+```
+
+### Log methods
+
+All log methods (`trace`, `debug`, `info`, `warn`, `error`, `fatal`) accept:
+
+1. **String only** - Simple message
+   ```typescript
+   logger.app.info('Server started');
+   ```
+
+2. **Object + message** - Structured context with message
+   ```typescript
+   logger.http.info({ method: 'GET', path: '/users', statusCode: 200 }, 'Request');
+   ```
+
+<Note>
+  When using object + message, the object fields are indexed and searchable in log aggregation tools.
+</Note>
+
+### child
+
+Creates a child logger with bound context fields.
+
+```typescript
+child(context: LogContext): NduloLogger
+```
+
+<ParamField path="context" type="LogContext">
+  Fields to bind to all subsequent logs from this logger instance.
+</ParamField>
+
+**Example:**
+
+```typescript
+const baseLogger = createLogger();
+
+// Create child with service context
+const serviceLogger = baseLogger.app.child({ 
+  service: 'payment-processor' 
+});
+
+serviceLogger.info('Processing payment'); 
+// Output: {"service":"payment-processor","msg":"Processing payment"}
+
+// Create further nested child
+const requestLogger = serviceLogger.child({ 
+  requestId: 'req-123' 
+});
+
+requestLogger.info('Validating card');
+// Output: {"service":"payment-processor","requestId":"req-123","msg":"Validating card"}
+```
+
+### pino
+
+Direct access to the underlying Pino logger instance for advanced use cases.
+
+```typescript
+readonly pino: Logger
+```
+
+<Note>
+  Use this escape hatch only when NduloLogger's API doesn't cover your needs. Common use cases include custom serializers or specific Pino features.
+</Note>
+
+**Example:**
+
+```typescript
+const logger = createLogger();
+
+// Access Pino directly for level checking
+if (logger.app.pino.isLevelEnabled('debug')) {
+  const expensive = computeExpensiveDebugInfo();
+  logger.app.debug({ data: expensive }, 'Debug info');
+}
+```
+
+---
+
+## LogContext
+
+Context fields that can be bound to logger instances.
+
+```typescript
+type LogContext = {
+  readonly requestId?: string | undefined;
+  readonly userId?: string | undefined;
+  readonly service?: string | undefined;
+  readonly component?: string | undefined;
+  readonly traceId?: string | undefined;
+  readonly method?: string | undefined;
+  readonly path?: string | undefined;
+  readonly statusCode?: number | undefined;
+  readonly durationMs?: number | undefined;
+  readonly userAgent?: string | undefined;
+  readonly ip?: string | undefined;
+  readonly error?: string | undefined;
+  [key: string]: string | number | boolean | undefined;
+};
+```
+
+All named fields are optional. The index signature allows arbitrary custom fields with serialisable values (string, number, or boolean).
+
+### Common patterns
+
+<CodeGroup>
+
+```typescript Request context
+const log = logger.context({
+  requestId: crypto.randomUUID(),
+  method: req.method,
+  path: req.path,
+  userId: req.user?.id,
+  ip: req.ip,
+});
+```
+
+```typescript Service context
+const log = logger.context({
+  service: 'auth-service',
+  component: 'jwt-validator',
+  traceId: req.headers['x-trace-id'],
+});
+```
+
+```typescript Error context
+logger.error.error({
+  error: err.message,
+  statusCode: 500,
+  path: req.path,
+  userId: req.user?.id,
+}, 'Request failed');
+```
+
+```typescript Custom fields
+const log = logger.context({
+  orderId: order.id,
+  customerId: customer.id,
+  paymentMethod: 'stripe',
+  amount: 9999,
+  currency: 'GBP',
+});
+```
+
+</CodeGroup>
+
+<Note>
+  Context values must be primitives (string, number, boolean). Objects and arrays will not be serialised correctly.
+</Note>

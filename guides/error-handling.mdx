@@ -1,0 +1,436 @@
+---
+title: Error handling
+description: Master the Result pattern and ErrorFactory for type-safe error handling in NduloJS
+---
+
+NduloJS uses the **Result pattern** to make errors explicit and type-safe. No exceptions, no try/catch — just values.
+
+## The Result type
+
+Every operation that can fail returns `Result<T, E>`:
+
+```ts
+import { Result, AppError, Ok, Err, ErrorFactory } from '@ndulojs/core';
+
+async function findUser(id: string): Promise<Result<User, AppError>> {
+  const user = await db.users.findById(id);
+  if (!user) return Err(ErrorFactory.notFound('User not found', 'User', id));
+  return Ok(user);
+}
+```
+
+- **`Ok(value)`** — success case with a value
+- **`Err(error)`** — failure case with an error
+- **`Result<T, E>`** — union type: `Success<T> | Failure<E>`
+
+## Handling results
+
+<Tabs>
+  <Tab title="Pattern matching (recommended)">
+    Check the `success` property:
+
+    ```ts
+    const result = await findUser('123');
+
+    if (result.success) {
+      console.log(result.value); // User
+    } else {
+      console.log(result.error); // AppError
+    }
+    ```
+
+    TypeScript narrows the type automatically.
+  </Tab>
+
+  <Tab title="Early return">
+    In handlers, return errors immediately:
+
+    ```ts
+    app.get('/users/:id', async ({ params }) => {
+      const result = await findUser(params.id);
+      if (!result.success) return result; // Return Err directly
+
+      return Ok({ user: result.value });
+    });
+    ```
+  </Tab>
+
+  <Tab title="Utility functions">
+    Use helpers for common patterns:
+
+    ```ts
+    import { unwrapOr, map, flatMap } from '@ndulojs/core';
+
+    // Provide a fallback
+    const user = unwrapOr(result, defaultUser);
+
+    // Transform success value
+    const nameResult = map(result, (user) => user.name);
+
+    // Chain operations
+    const emailResult = flatMap(result, (user) => validateEmail(user.email));
+    ```
+  </Tab>
+</Tabs>
+
+## ErrorFactory
+
+Create errors using `ErrorFactory`. Every method returns a typed error ready for `Err()`.
+
+### Validation errors (422)
+
+For input validation failures:
+
+```ts
+import { ErrorFactory, Err } from '@ndulojs/core';
+
+function validateEmail(email: string): Result<string, AppError> {
+  if (!email.includes('@')) {
+    return Err(
+      ErrorFactory.validation('Invalid email format', [
+        { field: 'email', message: 'Must contain @', value: email },
+      ]),
+    );
+  }
+  return Ok(email);
+}
+```
+
+<Accordion title="Full validation example with Zod">
+  ```ts
+  import { z } from 'zod';
+
+  const RegisterSchema = z.object({
+    email: z.string().email(),
+    password: z.string().min(8),
+    name: z.string(),
+  });
+
+  function validateRegister(data: unknown): Result<RegisterDTO, AppError> {
+    const parsed = RegisterSchema.safeParse(data);
+    if (!parsed.success) {
+      const errors = parsed.error.errors.map((e) => ({
+        field: e.path.join('.'),
+        message: e.message,
+        rule: e.code,
+      }));
+      return Err(ErrorFactory.validation('Validation failed', errors));
+    }
+    return Ok(parsed.data);
+  }
+  ```
+</Accordion>
+
+### Not found errors (404)
+
+For missing resources:
+
+```ts
+const user = await repo.findById(id);
+if (!user) {
+  return Err(ErrorFactory.notFound('User not found', 'User', id));
+}
+```
+
+### Unauthorized errors (401)
+
+For authentication failures:
+
+```ts
+if (!token) {
+  return Err(ErrorFactory.unauthorized('Missing token', 'missing_token'));
+}
+
+const userId = verifyToken(token);
+if (!userId) {
+  return Err(ErrorFactory.unauthorized('Invalid token', 'invalid_token'));
+}
+```
+
+**Available reasons:**
+- `invalid_token`
+- `expired_token`
+- `missing_token`
+- `invalid_credentials`
+- `missing_credentials`
+
+### Forbidden errors (403)
+
+For authorization failures:
+
+```ts
+if (!user.permissions.includes('delete:users')) {
+  return Err(ErrorFactory.forbidden('Insufficient permissions', 'delete:users'));
+}
+```
+
+### Conflict errors (409)
+
+For duplicate resources:
+
+```ts
+const existing = await repo.findByEmail(email);
+if (existing) {
+  return Err(ErrorFactory.conflict('Email already in use', 'email', email));
+}
+```
+
+### Business errors (400)
+
+For domain rule violations:
+
+```ts
+if (product.stock < quantity) {
+  return Err(
+    ErrorFactory.business('Insufficient stock', 'INSUFFICIENT_STOCK'),
+  );
+}
+
+if (order.status === 'shipped') {
+  return Err(
+    ErrorFactory.business('Cannot modify shipped order', 'ORDER_ALREADY_SHIPPED'),
+  );
+}
+```
+
+<Tip>
+  Use error codes for client-side logic. The `code` field is stable, unlike messages.
+</Tip>
+
+### Database errors (500)
+
+For database operation failures:
+
+```ts
+try {
+  return await db.transaction(async (tx) => {
+    // ... complex transaction
+  });
+} catch (err) {
+  return Err(
+    ErrorFactory.database('Transaction failed', err, 'TRANSACTION', 'orders'),
+  );
+}
+```
+
+### External service errors (502)
+
+For third-party API failures:
+
+```ts
+try {
+  const response = await stripe.charges.create({ ... });
+  return Ok(response);
+} catch (err) {
+  return Err(
+    ErrorFactory.externalService(
+      'Payment processing failed',
+      'Stripe',
+      err,
+      'charges.create',
+    ),
+  );
+}
+```
+
+### Rate limit errors (429)
+
+For rate limiting:
+
+```ts
+const allowed = await rateLimiter.check(userId);
+if (!allowed) {
+  return Err(ErrorFactory.tooManyRequests('Rate limit exceeded', 60));
+}
+```
+
+The second parameter is `retryAfter` in seconds.
+
+## Error composition
+
+Chain operations that return Results:
+
+<Steps>
+  <Step title="Sequential operations">
+    ```ts
+    async function updateUserEmail(
+      userId: string,
+      newEmail: string,
+    ): Promise<Result<User, AppError>> {
+      // Step 1: Find user
+      const userResult = await findUser(userId);
+      if (!userResult.success) return userResult;
+
+      // Step 2: Validate email
+      const emailResult = validateEmail(newEmail);
+      if (!emailResult.success) return emailResult;
+
+      // Step 3: Check for conflicts
+      const existing = await repo.findByEmail(emailResult.value);
+      if (existing) {
+        return Err(ErrorFactory.conflict('Email taken', 'email'));
+      }
+
+      // Step 4: Update
+      return repo.update(userId, { email: emailResult.value });
+    }
+    ```
+  </Step>
+
+  <Step title="Parallel operations">
+    Use `combine` to run multiple operations and collect errors:
+
+    ```ts
+    import { combine } from '@ndulojs/core';
+
+    const results = await Promise.all([
+      validateName(data.name),
+      validateEmail(data.email),
+      validatePassword(data.password),
+    ]);
+
+    const combined = combine(results);
+    if (!combined.success) return combined; // First error
+
+    const [name, email, password] = combined.value;
+    ```
+  </Step>
+
+  <Step title="Using flatMap">
+    Chain without nested if-checks:
+
+    ```ts
+    import { flatMap } from '@ndulojs/core';
+
+    return flatMap(
+      await findUser(userId),
+      (user) => flatMap(
+        validateEmail(newEmail),
+        (email) => repo.update(user.id, { email }),
+      ),
+    );
+    ```
+  </Step>
+</Steps>
+
+## Error responses
+
+The framework automatically maps errors to HTTP responses:
+
+```ts
+app.get('/users/:id', async ({ params }) => {
+  const result = await service.getUser(params.id);
+  return result; // Framework handles Ok/Err
+});
+```
+
+### Success response
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "123",
+    "name": "Ada",
+    "email": "ada@example.com"
+  }
+}
+```
+
+### Error response
+
+```json
+{
+  "success": false,
+  "error": {
+    "type": "NOT_FOUND",
+    "message": "User not found",
+    "resource": "User",
+    "resourceId": "123",
+    "timestamp": "2026-03-03T12:00:00.000Z"
+  }
+}
+```
+
+## Pattern matching on errors
+
+Handle different error types:
+
+```ts
+import { matchError } from '@ndulojs/core';
+
+const message = matchError(result.error, {
+  NOT_FOUND: (e) => `${e.resource} not found`,
+  UNAUTHORIZED: (e) => `Auth failed: ${e.reason}`,
+  VALIDATION_ERROR: (e) => e.errors.map((f) => f.message).join(', '),
+  default: (e) => `Error: ${e.message}`,
+});
+```
+
+## Component field for debugging
+
+Add a component name to track where errors originate:
+
+```ts
+return Err(
+  ErrorFactory.database('Query failed', err, 'SELECT', 'users', 'UserRepository'),
+);
+```
+
+In logs, you'll see:
+
+```json
+{
+  "component": "UserRepository",
+  "type": "DATABASE_ERROR",
+  "operation": "SELECT",
+  "table": "users"
+}
+```
+
+<Note>
+  The component field is logged but not exposed in HTTP responses.
+</Note>
+
+## Testing with Results
+
+Test both success and error paths:
+
+```ts
+import { describe, it, expect } from 'vitest';
+
+describe('UserService.register', () => {
+  it('returns Ok with user on success', async () => {
+    const result = await service.register({
+      email: 'new@example.com',
+      password: 'secret123',
+      name: 'New User',
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.value.user.email).toBe('new@example.com');
+    }
+  });
+
+  it('returns Err when email exists', async () => {
+    await service.register({ email: 'ada@example.com', password: 'pass', name: 'Ada' });
+
+    const result = await service.register({
+      email: 'ada@example.com',
+      password: 'different',
+      name: 'Another',
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.type).toBe('CONFLICT');
+      expect(result.error.message).toContain('Email');
+    }
+  });
+});
+```
+
+<Warning>
+  Never use `unwrap()` in production code — it throws on errors. Use it only in tests where you expect success.
+</Warning>

@@ -1,0 +1,294 @@
+---
+title: Clean Architecture
+description: How NduloJS enforces Clean Architecture structurally through modules, layers, and dependency rules
+---
+
+NduloJS enforces Clean Architecture structurally — dependency injection, explicit error handling, and layered modules ensure your codebase stays consistent as it grows.
+
+## Why Clean Architecture?
+
+Clean Architecture separates business logic from infrastructure concerns. This makes your code:
+
+- **Testable** — core logic has zero dependencies on databases, HTTP frameworks, or external services
+- **Maintainable** — clear boundaries between layers prevent mixing concerns
+- **Portable** — swap Elysia for Fastify or PostgreSQL for MongoDB without touching business rules
+
+<Info>
+NduloJS doesn't just recommend Clean Architecture — it enforces it through its project structure and module system.
+</Info>
+
+## Project structure
+
+Every NduloJS project follows this structure:
+
+```
+src/
+├── modules/
+│   └── {module}/
+│       ├── events/              # Domain events
+│       ├── application/
+│       │   ├── dtos/           # Data transfer objects
+│       │   ├── ports/          # Interfaces (repositories, external services)
+│       │   └── services/       # Business logic
+│       └── infrastructure/
+│           ├── persistence/    # Database implementations
+│           └── http/
+│               └── controllers/ # HTTP handlers
+└── index.ts
+```
+
+<Note>
+Generate this structure automatically with `ndulo generate module farms`
+</Note>
+
+## The layers
+
+### Domain layer (events/)
+
+Domain events represent things that happened in your business domain:
+
+```typescript events/order.events.ts
+export type OrderCreatedEvent = {
+  type: 'ORDER_CREATED';
+  orderId: string;
+  userId: string;
+  total: number;
+  timestamp: string;
+};
+
+export type OrderShippedEvent = {
+  type: 'ORDER_SHIPPED';
+  orderId: string;
+  trackingNumber: string;
+  timestamp: string;
+};
+
+export type OrderEvent = OrderCreatedEvent | OrderShippedEvent;
+```
+
+### Application layer (application/)
+
+The application layer contains:
+
+<Accordion title="DTOs (dtos/)">
+Data Transfer Objects define the shape of data crossing boundaries:
+
+```typescript application/dtos/user.dto.ts
+import { z } from 'zod';
+
+export const CreateUserSchema = z.object({
+  email: z.string().email(),
+  name: z.string().min(2),
+  password: z.string().min(8),
+});
+
+export type CreateUserDto = z.infer<typeof CreateUserSchema>;
+
+export type UserDto = {
+  id: string;
+  email: string;
+  name: string;
+  createdAt: string;
+};
+```
+</Accordion>
+
+<Accordion title="Ports (ports/)">
+Ports are interfaces that define contracts without implementation details:
+
+```typescript application/ports/user.port.ts
+import type { Result } from '@ndulojs/core';
+import type { AppError } from '@ndulojs/core';
+import type { UserDto, CreateUserDto } from '../dtos/user.dto';
+
+export interface IUserRepository {
+  findById(id: string): Promise<Result<UserDto | null, AppError>>;
+  findByEmail(email: string): Promise<Result<UserDto | null, AppError>>;
+  create(data: CreateUserDto): Promise<Result<UserDto, AppError>>;
+  delete(id: string): Promise<Result<void, AppError>>;
+}
+```
+
+<Warning>
+Ports must NEVER import infrastructure code. They define contracts that infrastructure implements.
+</Warning>
+</Accordion>
+
+<Accordion title="Services (services/)">
+Services contain pure business logic:
+
+```typescript application/services/user.service.ts
+import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+import type { Result, AppError } from '@ndulojs/core';
+import type { IUserRepository } from '../ports/user.port';
+import type { CreateUserDto, UserDto } from '../dtos/user.dto';
+
+export const createUserService = (repo: IUserRepository) => ({
+  async createUser(data: CreateUserDto): Promise<Result<UserDto, AppError>> {
+    // Business rule: email must be unique
+    const existing = await repo.findByEmail(data.email);
+    if (!existing.success) return existing;
+    
+    if (existing.value !== null) {
+      return Err(ErrorFactory.conflict('Email already in use', 'email', data.email));
+    }
+
+    // Delegate persistence to the repository
+    return repo.create(data);
+  },
+
+  async getUser(id: string): Promise<Result<UserDto, AppError>> {
+    const result = await repo.findById(id);
+    if (!result.success) return result;
+    
+    if (result.value === null) {
+      return Err(ErrorFactory.notFound('User not found', 'User', id));
+    }
+
+    return Ok(result.value);
+  },
+});
+
+export type IUserService = ReturnType<typeof createUserService>;
+```
+</Accordion>
+
+### Infrastructure layer (infrastructure/)
+
+The infrastructure layer implements ports and handles external concerns:
+
+<Accordion title="Persistence (persistence/)">
+Repositories implement port interfaces using real databases:
+
+```typescript infrastructure/persistence/user.repository.ts
+import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+import type { Result, AppError } from '@ndulojs/core';
+import type { IUserRepository } from '../../application/ports/user.port';
+import type { Database } from '../../../database';
+
+export const createUserRepository = (db: Database): IUserRepository => ({
+  async findById(id) {
+    try {
+      const user = await db.query.users.findFirst({
+        where: (users, { eq }) => eq(users.id, id),
+      });
+      return Ok(user ?? null);
+    } catch (error) {
+      return Err(ErrorFactory.database('Failed to find user', error, 'SELECT', 'users'));
+    }
+  },
+
+  async findByEmail(email) {
+    try {
+      const user = await db.query.users.findFirst({
+        where: (users, { eq }) => eq(users.email, email),
+      });
+      return Ok(user ?? null);
+    } catch (error) {
+      return Err(ErrorFactory.database('Failed to find user', error, 'SELECT', 'users'));
+    }
+  },
+
+  async create(data) {
+    try {
+      const [user] = await db.insert(users).values(data).returning();
+      return Ok(user);
+    } catch (error) {
+      return Err(ErrorFactory.database('Failed to create user', error, 'INSERT', 'users'));
+    }
+  },
+
+  async delete(id) {
+    try {
+      await db.delete(users).where(eq(users.id, id));
+      return Ok(undefined);
+    } catch (error) {
+      return Err(ErrorFactory.database('Failed to delete user', error, 'DELETE', 'users'));
+    }
+  },
+});
+```
+</Accordion>
+
+<Accordion title="HTTP Controllers (http/controllers/)">
+Controllers handle HTTP concerns and delegate to services:
+
+```typescript infrastructure/http/controllers/user.controller.ts
+import type { IHttpAdapter, RequestContext } from '@ndulojs/core';
+import { Err, ErrorFactory } from '@ndulojs/core';
+import type { IUserService } from '../../../application/services/user.service';
+import { CreateUserSchema } from '../../../application/dtos/user.dto';
+
+export const registerUserRoutes = (app: IHttpAdapter, service: IUserService) => {
+  app.post('/users', async ({ body }) => {
+    const parsed = CreateUserSchema.safeParse(body);
+    if (!parsed.success) {
+      return Err(ErrorFactory.validation('Invalid user data', parsed.error.errors.map(e => ({
+        field: e.path.join('.'),
+        message: e.message,
+      }))));
+    }
+
+    return service.createUser(parsed.data);
+  });
+
+  app.get('/users/:id', ({ params }) => {
+    return service.getUser(params.id);
+  });
+};
+```
+</Accordion>
+
+## Dependency rules
+
+Dependencies flow inward — outer layers depend on inner layers, never the reverse:
+
+```
+┌─────────────────────────────────┐
+│     Infrastructure Layer        │
+│   (persistence, controllers)    │
+│    depends on ↓                 │
+├─────────────────────────────────┤
+│     Application Layer           │
+│   (services, ports, DTOs)       │
+│    depends on ↓                 │
+├─────────────────────────────────┤
+│      Domain Layer               │
+│        (events)                 │
+│    depends on nothing           │
+└─────────────────────────────────┘
+```
+
+<Warning>
+**Never import infrastructure code into services**. Services should only depend on ports (interfaces).
+</Warning>
+
+## Wiring it together
+
+Use the [dependency injection container](/concepts/dependency-injection) to wire layers:
+
+```typescript src/index.ts
+import { createApp, createContainer } from '@ndulojs/core';
+import { createDatabase } from './database';
+import { createUserRepository } from './modules/users/infrastructure/persistence/user.repository';
+import { createUserService } from './modules/users/application/services/user.service';
+import { registerUserRoutes } from './modules/users/infrastructure/http/controllers/user.controller';
+
+const { app, logger } = await createApp({ port: 3000 });
+
+const container = createContainer()
+  .register('Database', () => createDatabase())
+  .register('UserRepository', (c) => createUserRepository(c.resolve('Database')))
+  .register('UserService', (c) => createUserService(c.resolve('UserRepository')));
+
+registerUserRoutes(app, container.resolve('UserService'));
+
+app.listen(3000);
+logger.app.info('Server started on port 3000');
+```
+
+## Related concepts
+
+- [Dependency Injection](/concepts/dependency-injection) — Type-safe DI container
+- [Result Pattern](/concepts/result-pattern) — Explicit error handling
+- [HTTP Adapter](/concepts/http-adapter) — Framework-agnostic HTTP layer

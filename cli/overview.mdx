@@ -1,0 +1,100 @@
+---
+title: CLI overview
+description: Command-line tools for scaffolding and generating NduloJS projects
+---
+
+The NduloJS CLI provides commands for creating new projects and generating Clean Architecture modules with a single command.
+
+## Installation
+
+The CLI is included with `@ndulojs/core`. Two executables are available:
+
+- **`ndulojs`** — Project creation
+- **`ndulo`** — Code generation inside a project
+
+```bash
+npx ndulojs create my-app
+```
+
+<Note>
+No global installation required. Use `npx` to run commands directly from the registry.
+</Note>
+
+## Available commands
+
+<CardGroup cols={2}>
+  <Card title="ndulojs create" icon="folder-plus" href="/cli/create">
+    Scaffold a new NduloJS project with the full structure
+  </Card>
+  <Card title="ndulo generate" icon="code" href="/cli/generate">
+    Generate complete modules with Clean Architecture layers
+  </Card>
+  <Card title="ndulo add" icon="file-plus" href="/cli/add">
+    Add individual files to existing modules
+  </Card>
+</CardGroup>
+
+## Quick start
+
+<Steps>
+  <Step title="Create a new project">
+    ```bash
+    npx ndulojs create my-app
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    ```bash
+    cd my-app
+    bun install
+    cp .env.example .env
+    ```
+  </Step>
+
+  <Step title="Generate your first module">
+    ```bash
+    npx ndulo generate module users
+    ```
+  </Step>
+
+  <Step title="Start the development server">
+    ```bash
+    bun dev
+    ```
+  </Step>
+</Steps>
+
+## Name conventions
+
+The CLI automatically normalizes input names to match NduloJS conventions:
+
+| Input | Singular form | Generated files |
+|-------|--------------|----------------|
+| `farms` | `farm` | `farm.service.ts` |
+| `farmMembers` | `farmMember` | `farm-member.service.ts` |
+| `crop-cycles` | `cropCycle` | `crop-cycle.service.ts` |
+| `activities` | `activity` | `activity.service.ts` |
+
+<Tip>
+You can use any case (camelCase, kebab-case, snake_case) — the CLI handles pluralization and formatting automatically.
+</Tip>
+
+## Overwrite protection
+
+If a module or file already exists, the CLI prompts for confirmation before overwriting:
+
+```bash
+Module "farms" already exists. Overwrite? (y/N)
+```
+
+This prevents accidental data loss when running generation commands.
+
+## Runtime support
+
+The CLI works with:
+
+- **Bun** (recommended)
+- **Node.js** 18+
+- **pnpm**, **npm**, or **yarn**
+
+All generated projects use ES modules by default.

@@ -1,0 +1,499 @@
+---
+title: Dependency injection
+description: Type-safe dependency injection container with zero decorators and full type inference
+---
+
+NduloJS provides a functional, type-safe dependency injection (DI) container. No decorators, no metadata reflection, no magic — just pure TypeScript with full type inference.
+
+## Why dependency injection?
+
+Dependency injection inverts control: instead of modules creating their own dependencies, dependencies are injected from the outside. This makes code:
+
+- **Testable** — swap real databases for in-memory fakes
+- **Modular** — dependencies are explicit, not hidden in constructors
+- **Maintainable** — change implementations without touching consumers
+
+<Info>
+NduloJS uses a **registry-based** container with compile-time type safety. The container knows exactly what you registered and infers return types automatically.
+</Info>
+
+## Core types
+
+### Container type
+
+The main container interface:
+
+```typescript packages/core/src/container/types.ts
+export type Container<TRegistry extends RegistryConstraint> = {
+  resolve<K extends keyof TRegistry>(token: K): TRegistry[K];
+  
+  register<K extends Token, V>(
+    token: K,
+    factory: Factory<V, TRegistry & Record<K, V>>,
+    scope?: Scope,
+  ): Container<TRegistry & Record<K, V>>;
+  
+  registerClass<K extends Token, V>(
+    token: K,
+    constructor: Constructor<V>,
+    scope?: Scope,
+  ): Container<TRegistry & Record<K, V>>;
+  
+  registerScoped<K extends Token, V>(
+    token: K,
+    factory: Factory<V, TRegistry & Record<K, V>>,
+  ): Container<TRegistry & Record<K, V>>;
+  
+  registerTransient<K extends Token, V>(
+    token: K,
+    factory: Factory<V, TRegistry & Record<K, V>>,
+  ): Container<TRegistry & Record<K, V>>;
+  
+  createScope(): ScopedContainer<TRegistry>;
+  has(token: Token): boolean;
+  reset(): void;
+};
+```
+
+### Factory type
+
+A factory function receives the container and returns a value:
+
+```typescript packages/core/src/container/types.ts
+export type Factory<T, TRegistry extends RegistryConstraint> = (
+  container: ResolverContainer<TRegistry>,
+) => T;
+```
+
+### Scope
+
+Three lifecycle scopes:
+
+```typescript packages/core/src/container/types.ts
+export type Scope = 'singleton' | 'scoped' | 'transient';
+```
+
+- **singleton** — created once, reused forever (default)
+- **scoped** — created once per scope (e.g. per HTTP request)
+- **transient** — created fresh every time `resolve()` is called
+
+## Basic usage
+
+### Creating a container
+
+```typescript
+import { createContainer } from '@ndulojs/core';
+
+const container = createContainer();
+// Container<{}> — empty registry
+```
+
+### Registering dependencies
+
+```typescript
+const container = createContainer()
+  .register('Config', () => ({
+    dbUrl: process.env.DATABASE_URL!,
+    port: 3000,
+  }))
+  .register('Database', (c) => createDatabase(c.resolve('Config')))
+  .register('UserRepository', (c) => createUserRepository(c.resolve('Database')))
+  .register('UserService', (c) => createUserService(c.resolve('UserRepository')));
+
+// TypeScript infers the full registry:
+// Container<{
+//   Config: { dbUrl: string; port: number };
+//   Database: Database;
+//   UserRepository: IUserRepository;
+//   UserService: IUserService;
+// }>
+```
+
+<Info>
+The factory function receives the container, so you can resolve dependencies inside it.
+</Info>
+
+### Resolving dependencies
+
+```typescript
+const userService = container.resolve('UserService');
+// TypeScript infers: IUserService
+
+const config = container.resolve('Config');
+// TypeScript infers: { dbUrl: string; port: number }
+```
+
+<Warning>
+If you try to resolve a token that doesn't exist, you'll get a **compile-time error**:
+
+```typescript
+container.resolve('NonExistent');
+// ❌ TypeScript error: Argument of type '"NonExistent"' is not assignable
+```
+</Warning>
+
+## Dependency scopes
+
+### Singleton (default)
+
+Created once and cached forever:
+
+```typescript
+const container = createContainer()
+  .register('Database', () => createDatabase(), 'singleton');
+  // or just omit scope — singleton is default
+
+const db1 = container.resolve('Database');
+const db2 = container.resolve('Database');
+console.log(db1 === db2); // true — same instance
+```
+
+### Scoped
+
+Created once per scope (typically per HTTP request):
+
+```typescript
+const container = createContainer()
+  .registerScoped('RequestContext', () => ({
+    requestId: crypto.randomUUID(),
+    timestamp: Date.now(),
+  }));
+
+const scope1 = container.createScope();
+const ctx1a = scope1.resolve('RequestContext');
+const ctx1b = scope1.resolve('RequestContext');
+console.log(ctx1a === ctx1b); // true — same instance within scope
+
+const scope2 = container.createScope();
+const ctx2 = scope2.resolve('RequestContext');
+console.log(ctx1a === ctx2); // false — different scope, new instance
+```
+
+<CodeGroup>
+```typescript HTTP request scoping
+import { createContainer } from '@ndulojs/core';
+import type { IHttpAdapter, RequestContext } from '@ndulojs/core';
+
+const container = createContainer()
+  .register('Database', () => createDatabase())
+  .registerScoped('RequestLogger', (c) => {
+    const requestId = crypto.randomUUID();
+    return c.resolve('Logger').child({ requestId });
+  })
+  .register('UserService', (c) => createUserService(
+    c.resolve('Database'),
+    c.resolve('RequestLogger') // gets fresh logger per request
+  ));
+
+app.get('/users/:id', async ({ params }) => {
+  const scope = container.createScope();
+  const service = scope.resolve('UserService');
+  
+  const result = await service.getUser(params.id);
+  
+  scope.dispose(); // cleanup scoped resources
+  return result;
+});
+```
+
+```typescript Middleware pattern
+const scopeMiddleware = (container: Container) => {
+  return async (ctx: RequestContext, next: () => Promise<void>) => {
+    const scope = container.createScope();
+    
+    // Attach scope to context
+    (ctx as any).scope = scope;
+    
+    try {
+      await next();
+    } finally {
+      scope.dispose();
+    }
+  };
+};
+```
+</CodeGroup>
+
+### Transient
+
+Created fresh every time:
+
+```typescript
+const container = createContainer()
+  .registerTransient('Logger', () => createLogger());
+
+const logger1 = container.resolve('Logger');
+const logger2 = container.resolve('Logger');
+console.log(logger1 === logger2); // false — different instances
+```
+
+## Registering classes
+
+For OOP patterns, use `registerClass`:
+
+```typescript
+class UserService {
+  constructor(
+    private readonly repo: IUserRepository,
+    private readonly logger: Logger,
+  ) {}
+
+  async getUser(id: string) {
+    this.logger.info(`Getting user ${id}`);
+    return this.repo.findById(id);
+  }
+}
+
+const container = createContainer()
+  .register('Database', () => createDatabase())
+  .register('UserRepository', (c) => createUserRepository(c.resolve('Database')))
+  .register('Logger', () => createLogger())
+  .registerClass('UserService', UserService);
+
+// ❌ This won't work — UserService constructor needs arguments
+// The factory receives the container, but the class doesn't
+```
+
+<Warning>
+`registerClass` is limited — it can't inject dependencies into constructors. Use factory functions instead:
+
+```typescript
+const container = createContainer()
+  .register('UserService', (c) => new UserService(
+    c.resolve('UserRepository'),
+    c.resolve('Logger'),
+  ));
+```
+</Warning>
+
+## Circular dependency detection
+
+The container detects circular dependencies at runtime:
+
+```typescript
+const container = createContainer()
+  .register('A', (c) => {
+    const b = c.resolve('B'); // tries to resolve B
+    return { b };
+  })
+  .register('B', (c) => {
+    const a = c.resolve('A'); // tries to resolve A — circular!
+    return { a };
+  });
+
+container.resolve('A');
+// ❌ Throws: CircularDependencyError: Circular dependency detected: A -> B -> A
+```
+
+<Info>
+Circular dependencies usually indicate a design problem. Consider:
+- Extracting shared logic into a third service
+- Using events instead of direct calls
+- Restructuring your modules
+</Info>
+
+## Real-world example
+
+Here's a complete setup for a user management module:
+
+<CodeGroup>
+```typescript Registry definition
+import type { Database } from './database';
+import type { IUserRepository } from './modules/users/application/ports/user.port';
+import type { IUserService } from './modules/users/application/services/user.service';
+import type { LoggerSuite } from '@ndulojs/core';
+
+type AppRegistry = {
+  Database: Database;
+  Logger: LoggerSuite;
+  UserRepository: IUserRepository;
+  UserService: IUserService;
+};
+```
+
+```typescript Container setup
+import { createContainer } from '@ndulojs/core';
+import { createDatabase } from './database';
+import { createLogger } from '@ndulojs/core';
+import { createUserRepository } from './modules/users/infrastructure/persistence/user.repository';
+import { createUserService } from './modules/users/application/services/user.service';
+
+const container = createContainer<AppRegistry>()
+  .register('Logger', () => createLogger({ pretty: true }))
+  .register('Database', (c) => {
+    c.resolve('Logger').app.info('Connecting to database');
+    return createDatabase();
+  })
+  .register('UserRepository', (c) => 
+    createUserRepository(c.resolve('Database'))
+  )
+  .register('UserService', (c) =>
+    createUserService(c.resolve('UserRepository'))
+  );
+
+export { container };
+export type { AppRegistry };
+```
+
+```typescript Usage in routes
+import { container } from './container';
+import type { IHttpAdapter } from '@ndulojs/core';
+
+export const registerRoutes = (app: IHttpAdapter) => {
+  const userService = container.resolve('UserService');
+  
+  app.get('/users/:id', ({ params }) => {
+    return userService.getUser(params.id);
+  });
+  
+  app.post('/users', ({ body }) => {
+    return userService.createUser(body);
+  });
+};
+```
+</CodeGroup>
+
+## Testing with DI
+
+DI makes testing trivial — swap real implementations for fakes:
+
+```typescript user.service.test.ts
+import { describe, it, expect } from 'bun:test';
+import { createContainer } from '@ndulojs/core';
+import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+import { createUserService } from './user.service';
+import type { IUserRepository } from '../ports/user.port';
+
+// Fake repository for testing
+const createFakeUserRepository = (): IUserRepository => ({
+  async findById(id) {
+    if (id === '1') return Ok({ id: '1', name: 'Alice', email: 'alice@example.com' });
+    return Ok(null);
+  },
+  async findByEmail(email) {
+    if (email === 'alice@example.com') {
+      return Ok({ id: '1', name: 'Alice', email: 'alice@example.com' });
+    }
+    return Ok(null);
+  },
+  async create(data) {
+    return Ok({ id: '2', ...data });
+  },
+  async delete(id) {
+    return Ok(undefined);
+  },
+});
+
+describe('UserService', () => {
+  it('returns user when found', async () => {
+    const container = createContainer()
+      .register('UserRepository', () => createFakeUserRepository())
+      .register('UserService', (c) => createUserService(c.resolve('UserRepository')));
+    
+    const service = container.resolve('UserService');
+    const result = await service.getUser('1');
+    
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.value.name).toBe('Alice');
+    }
+  });
+  
+  it('returns error when user not found', async () => {
+    const container = createContainer()
+      .register('UserRepository', () => createFakeUserRepository())
+      .register('UserService', (c) => createUserService(c.resolve('UserRepository')));
+    
+    const service = container.resolve('UserService');
+    const result = await service.getUser('999');
+    
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.type).toBe('NOT_FOUND');
+    }
+  });
+});
+```
+
+## Best practices
+
+<Accordion title="Define a typed registry">
+Create a type for your registry to get better autocomplete:
+
+```typescript
+type AppRegistry = {
+  Config: AppConfig;
+  Database: Database;
+  Logger: LoggerSuite;
+  UserRepository: IUserRepository;
+  UserService: IUserService;
+};
+
+const container = createContainer<AppRegistry>();
+```
+</Accordion>
+
+<Accordion title="Use factory functions over classes">
+Factory functions are more flexible and testable:
+
+```typescript
+// ✅ Good — factory function
+export const createUserService = (repo: IUserRepository) => ({
+  async getUser(id: string) {
+    return repo.findById(id);
+  },
+});
+
+// ❌ Avoid — class with constructor injection is harder to test
+export class UserService {
+  constructor(private repo: IUserRepository) {}
+  async getUser(id: string) {
+    return this.repo.findById(id);
+  }
+}
+```
+</Accordion>
+
+<Accordion title="Register in dependency order">
+Register dependencies before their consumers:
+
+```typescript
+const container = createContainer()
+  .register('Config', () => loadConfig())           // no dependencies
+  .register('Database', (c) => createDb(c.resolve('Config')))  // depends on Config
+  .register('UserRepo', (c) => createRepo(c.resolve('Database'))) // depends on Database
+  .register('UserService', (c) => createService(c.resolve('UserRepo'))); // depends on UserRepo
+```
+</Accordion>
+
+<Accordion title="Reset singletons in tests">
+Use `container.reset()` between tests to clear singleton cache:
+
+```typescript
+import { beforeEach } from 'bun:test';
+import { container } from './container';
+
+beforeEach(() => {
+  container.reset(); // clear singleton cache
+});
+```
+</Accordion>
+
+<Accordion title="Use scopes for per-request state">
+Register request-specific dependencies as scoped:
+
+```typescript
+const container = createContainer()
+  .register('Database', () => createDatabase()) // singleton
+  .registerScoped('RequestId', () => crypto.randomUUID()) // scoped
+  .registerScoped('RequestLogger', (c) => 
+    logger.child({ requestId: c.resolve('RequestId') })
+  );
+```
+</Accordion>
+
+## Related concepts
+
+- [Clean Architecture](/concepts/architecture) — How DI enables layered architecture
+- [HTTP Adapter](/concepts/http-adapter) — Using DI with HTTP handlers
+- [Logging](/concepts/logging) — Injecting loggers into services

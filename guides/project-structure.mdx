@@ -1,0 +1,298 @@
+---
+title: Project structure
+description: Learn how to organize your NduloJS application following Clean Architecture principles
+---
+
+NduloJS enforces a module-based structure inspired by Clean Architecture. Every module is self-contained with clear boundaries between layers.
+
+## Generated structure
+
+When you run `ndulo generate module users`, the CLI creates:
+
+```
+src/modules/users/
+├── events/user.events.ts
+├── application/
+│   ├── dtos/user.dto.ts
+│   ├── ports/user.port.ts
+│   └── services/user.service.ts
+└── infrastructure/
+    ├── persistence/user.repository.ts
+    └── http/controllers/user.controller.ts
+```
+
+### Layer overview
+
+<Steps>
+  <Step title="Domain events">
+    Event definitions for this module. Use these to communicate between modules without tight coupling.
+
+    ```ts
+    export type UserCreatedPayload = {
+      userId: string;
+      email: string;
+    };
+
+    export const userEvents = {
+      created: 'user.created',
+    } as const;
+    ```
+  </Step>
+
+  <Step title="Application layer">
+    Business logic and contracts. This layer is framework-agnostic.
+
+    - **DTOs** — data transfer objects for validation and serialization
+    - **Ports** — interfaces (contracts) for services and repositories
+    - **Services** — business logic implementation
+  </Step>
+
+  <Step title="Infrastructure layer">
+    External concerns — HTTP, database, third-party APIs.
+
+    - **Persistence** — database access (repositories)
+    - **HTTP** — controllers, route handlers
+    - **External** — third-party service adapters (optional)
+  </Step>
+</Steps>
+
+## Full project layout
+
+```
+my-app/
+├── src/
+│   ├── modules/
+│   │   ├── users/
+│   │   │   ├── events/
+│   │   │   ├── application/
+│   │   │   └── infrastructure/
+│   │   └── products/
+│   │       ├── events/
+│   │       ├── application/
+│   │       └── infrastructure/
+│   └── index.ts
+├── package.json
+└── tsconfig.json
+```
+
+## Module boundaries
+
+Each module should be **independently deployable** if needed. Modules communicate through:
+
+<Tabs>
+  <Tab title="Events (recommended)">
+    Use domain events for async communication:
+
+    ```ts
+    // In user.service.ts
+    const user = await repo.create(data);
+    eventBus.publish(userEvents.created, { userId: user.id, email: user.email });
+    ```
+
+    Other modules listen without knowing about the user module.
+  </Tab>
+
+  <Tab title="Direct service calls">
+    For synchronous operations, inject services from other modules:
+
+    ```ts
+    const container = createContainer()
+      .register('UserService', () => createUserService(...))
+      .register('OrderService', (c) => 
+        createOrderService(c.resolve('UserService'))
+      );
+    ```
+
+    <Warning>
+      This creates coupling. Prefer events for cross-module communication.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Organizing services
+
+### Single responsibility
+
+Each service handles one domain concept:
+
+```ts
+// ✅ Good — focused services
+const createUserAuthService = (repo: IUserRepository): IUserAuthService => ({});
+const createUserProfileService = (repo: IUserRepository): IUserProfileService => ({});
+
+// ❌ Bad — god service
+const createUserService = (): IUserService => ({
+  register() {},
+  login() {},
+  updateProfile() {},
+  deleteAccount() {},
+  sendEmail() {},
+  generateReport() {},
+});
+```
+
+### Service composition
+
+Compose smaller services into larger workflows:
+
+```ts
+const createOrderService = (
+  orderRepo: IOrderRepository,
+  userService: IUserService,
+  inventoryService: IInventoryService,
+): IOrderService => ({
+  async createOrder(userId, items) {
+    const userResult = await userService.getUser(userId);
+    if (!userResult.success) return userResult;
+
+    const stockResult = await inventoryService.checkStock(items);
+    if (!stockResult.success) return stockResult;
+
+    return orderRepo.create({ userId, items });
+  },
+});
+```
+
+## Organizing repositories
+
+### One repository per aggregate
+
+An aggregate is a cluster of related entities treated as one unit:
+
+```ts
+// users module
+const createUserRepository = (db: Database): IUserRepository => ({
+  async findById(id) {},
+  async findByEmail(email) {},
+  async create(data) {},
+});
+
+// orders module
+const createOrderRepository = (db: Database): IOrderRepository => ({
+  async findById(id) {},
+  async findByUserId(userId) {},
+  async create(data) {},
+  async addLineItem(orderId, item) {}, // aggregate operation
+});
+```
+
+### Repository location
+
+Place repositories in `infrastructure/persistence/` because they depend on database technology:
+
+```
+infrastructure/
+└── persistence/
+    ├── user.repository.ts        # Drizzle, Prisma, etc.
+    ├── user.repository.memory.ts # In-memory (for tests)
+    └── user.repository.sql.ts    # Raw SQL (if needed)
+```
+
+<Tip>
+  Define the repository interface (`IUserRepository`) in `application/ports/` so services depend on abstractions, not implementations.
+</Tip>
+
+## Organizing controllers
+
+### Thin controllers
+
+Controllers only handle HTTP concerns — parsing, validation, auth. Business logic stays in services.
+
+```ts
+export const createUserController = (
+  app: IHttpAdapter,
+  service: IUserService,
+): void => {
+  app.group('/users', (r) => {
+    r.post('/register', async ({ body }) => {
+      // Parse and validate (could use Zod here)
+      const { email, password, name } = body as RegisterDTO;
+
+      // Delegate to service
+      return service.register({ email, password, name });
+    });
+
+    r.get('/:id', async ({ params }) => {
+      return service.getUser(params.id);
+    });
+  });
+};
+```
+
+### Group related routes
+
+Use `app.group()` to namespace routes:
+
+```ts
+app.group('/users', (r) => {
+  r.post('/register', registerHandler);
+  r.post('/login', loginHandler);
+
+  // Nested groups
+  r.group('/:userId', (user) => {
+    user.get('/', getUserHandler);
+    user.patch('/', updateUserHandler);
+    user.delete('/', deleteUserHandler);
+  });
+});
+```
+
+## Submodules
+
+For large domains, create submodules:
+
+```bash
+ndulo generate module farms --sub members
+```
+
+This creates:
+
+```
+src/modules/farms/members/
+├── application/
+│   ├── dtos/member.dto.ts
+│   ├── ports/member.port.ts
+│   └── services/member.service.ts
+└── infrastructure/
+    ├── persistence/member.repository.ts
+    └── http/controllers/member.controller.ts
+```
+
+<Note>
+  Submodules share the parent's event definitions. Define cross-cutting events at the parent level.
+</Note>
+
+## Example: Complete module registration
+
+In `src/index.ts`:
+
+```ts
+import { createApp, createContainer } from '@ndulojs/core';
+import { createUserRepository } from './modules/users/infrastructure/persistence/user.repository.js';
+import { createUserService } from './modules/users/application/services/user.service.js';
+import { createUserController } from './modules/users/infrastructure/http/controllers/user.controller.js';
+
+const container = createContainer()
+  .register('Database', () => createDatabase())
+  .register('UserRepository', (c) => createUserRepository(c.resolve('Database')))
+  .register('UserService', (c) => createUserService(c.resolve('UserRepository')));
+
+const app = await createApp({ port: 3000 });
+
+createUserController(app, container.resolve('UserService'));
+
+app.listen(3000);
+```
+
+## When to break into a new module
+
+Create a new module when:
+
+- The domain concept is distinct (users vs. orders vs. payments)
+- It could be deployed independently
+- It has a different team owner
+- The existing module exceeds ~1000 lines
+
+<Warning>
+  Don't create modules too early. Start with one module and split when boundaries become clear.
+</Warning>

@@ -1,0 +1,471 @@
+---
+title: Logging
+description: Structured logging with Pino — three channels, daily rotation, and per-request context
+---
+
+NduloJS provides a structured logging system built on [Pino](https://getpino.io). Logs are automatically rotated daily and organized into three channels: `app`, `http`, and `error`.
+
+## Why structured logging?
+
+Structured logs are machine-readable JSON — perfect for aggregation, searching, and alerting:
+
+```json
+{
+  "level": "info",
+  "time": 1678886400000,
+  "msg": "User created",
+  "userId": "123",
+  "email": "alice@example.com",
+  "requestId": "req_abc"
+}
+```
+
+Compare to plain text:
+
+```
+[INFO] User created: 123 (alice@example.com) - req_abc
+```
+
+<Info>
+Structured logs let you search for `userId:123` or filter by `requestId:req_abc` in tools like Grafana, Datadog, or CloudWatch.
+</Info>
+
+## Core types
+
+### LoggerSuite
+
+The main logger returned by `createLogger()` and `createApp()`:
+
+```typescript packages/core/src/logger/types.ts
+export type LoggerSuite = {
+  readonly app: NduloLogger;
+  readonly http: NduloLogger;
+  readonly error: NduloLogger;
+  readonly context: (ctx: LogContext) => {
+    app: NduloLogger;
+    http: NduloLogger;
+    error: NduloLogger;
+  };
+};
+```
+
+### NduloLogger
+
+A thin wrapper around Pino with typed log methods:
+
+```typescript packages/core/src/logger/types.ts
+export type NduloLogger = {
+  readonly trace: (obj: LogContext | string, msg?: string) => void;
+  readonly debug: (obj: LogContext | string, msg?: string) => void;
+  readonly info: (obj: LogContext | string, msg?: string) => void;
+  readonly warn: (obj: LogContext | string, msg?: string) => void;
+  readonly error: (obj: LogContext | string, msg?: string) => void;
+  readonly fatal: (obj: LogContext | string, msg?: string) => void;
+  readonly child: (context: LogContext) => NduloLogger;
+  readonly pino: Logger; // Escape hatch to raw Pino
+};
+```
+
+### LogContext
+
+Context fields that can be attached to log entries:
+
+```typescript packages/core/src/logger/types.ts
+export type LogContext = {
+  readonly requestId?: string | undefined;
+  readonly userId?: string | undefined;
+  readonly service?: string | undefined;
+  readonly component?: string | undefined;
+  readonly traceId?: string | undefined;
+  readonly method?: string | undefined;
+  readonly path?: string | undefined;
+  readonly statusCode?: number | undefined;
+  readonly durationMs?: number | undefined;
+  readonly userAgent?: string | undefined;
+  readonly ip?: string | undefined;
+  readonly error?: string | undefined;
+  [key: string]: string | number | boolean | undefined;
+};
+```
+
+## Creating a logger
+
+### Standalone logger
+
+```typescript
+import { createLogger } from '@ndulojs/core';
+
+const logger = createLogger({
+  level: 'info',          // Minimum log level
+  dir: 'logs',           // Directory for log files
+  pretty: false,         // false = JSON files, true = colorized terminal
+  retainDays: 30,        // Keep 30 days of rotated files
+});
+
+logger.app.info('Application started');
+logger.http.info({ method: 'GET', path: '/users' }, 'Request received');
+logger.error.error({ error: 'Database connection failed' }, 'Critical error');
+```
+
+### From createApp()
+
+`createApp()` returns a logger automatically:
+
+```typescript
+import { createApp } from '@ndulojs/core';
+
+const { app, logger } = await createApp({
+  port: 3000,
+  logger: {
+    level: 'info',
+    pretty: true, // Pretty-print for development
+  },
+});
+
+logger.app.info('Server started on port 3000');
+```
+
+<Info>
+The logger from `createApp()` is already wired for HTTP request/response logging — you don't need to set it up manually.
+</Info>
+
+## The three channels
+
+NduloJS organizes logs into three channels, each writing to its own file:
+
+<Tabs>
+  <Tab title="app">
+Application-level logs — business logic, service events, general info:
+
+```typescript
+logger.app.info('User service initialized');
+logger.app.debug({ userId: '123' }, 'Fetching user data');
+logger.app.warn({ retries: 3 }, 'Retrying external API call');
+```
+
+Writes to: `logs/app/YYYY-MM-DD.log`
+  </Tab>
+
+  <Tab title="http">
+HTTP request/response logs:
+
+```typescript
+logger.http.info({
+  method: 'POST',
+  path: '/users',
+  statusCode: 201,
+  durationMs: 45,
+  requestId: 'req_abc',
+}, 'Request completed');
+```
+
+Writes to: `logs/http/YYYY-MM-DD.log`
+
+<Info>
+The HTTP adapter logs all requests automatically — you don't need to log them manually.
+</Info>
+  </Tab>
+
+  <Tab title="error">
+Error-level logs — unhandled exceptions, critical failures:
+
+```typescript
+logger.error.error({ error: err, stack: err.stack }, 'Unhandled exception');
+logger.error.fatal({ error: 'Database down' }, 'Critical system failure');
+```
+
+Writes to: `logs/error/YYYY-MM-DD.log`
+  </Tab>
+</Tabs>
+
+## Log levels
+
+NduloJS supports six log levels (same as Pino):
+
+| Level | Numeric value | Use case |
+|-------|---------------|----------|
+| `trace` | 10 | Extremely detailed debugging |
+| `debug` | 20 | Debugging information |
+| `info` | 30 | General informational messages (default) |
+| `warn` | 40 | Warning messages (non-critical issues) |
+| `error` | 50 | Error messages (recoverable failures) |
+| `fatal` | 60 | Fatal errors (unrecoverable failures) |
+
+Set the minimum level in config:
+
+```typescript
+const logger = createLogger({ level: 'debug' });
+
+logger.app.trace('This will NOT be logged (below debug)');
+logger.app.debug('This WILL be logged');
+logger.app.info('This WILL be logged');
+```
+
+## Per-request context
+
+Use `logger.context()` to bind fields to all log entries:
+
+```typescript
+const requestLogger = logger.context({
+  requestId: 'req_abc123',
+  userId: 'user_456',
+});
+
+requestLogger.app.info('Processing request');
+// Output: { level: 30, msg: 'Processing request', requestId: 'req_abc123', userId: 'user_456' }
+
+requestLogger.app.error({ error: 'Failed' }, 'Request failed');
+// Output: { level: 50, msg: 'Request failed', requestId: 'req_abc123', userId: 'user_456', error: 'Failed' }
+```
+
+### Child loggers
+
+Create child loggers with `.child()`:
+
+```typescript
+const baseLogger = createLogger({ pretty: true });
+
+const userServiceLogger = baseLogger.app.child({ service: 'UserService' });
+
+userServiceLogger.info('User created');
+// Output: { level: 30, msg: 'User created', service: 'UserService' }
+
+userServiceLogger.error({ userId: '123' }, 'User creation failed');
+// Output: { level: 50, msg: 'User creation failed', service: 'UserService', userId: '123' }
+```
+
+## Real-world examples
+
+<CodeGroup>
+```typescript Service logging
+import type { LoggerSuite } from '@ndulojs/core';
+import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+import type { IUserRepository } from '../ports/user.port';
+
+export const createUserService = (
+  repo: IUserRepository,
+  logger: LoggerSuite,
+) => ({
+  async createUser(data: CreateUserDto) {
+    logger.app.info({ email: data.email }, 'Creating user');
+    
+    const existing = await repo.findByEmail(data.email);
+    if (!existing.success) {
+      logger.error.error({ error: existing.error }, 'Failed to check existing user');
+      return existing;
+    }
+    
+    if (existing.value !== null) {
+      logger.app.warn({ email: data.email }, 'Duplicate email attempt');
+      return Err(ErrorFactory.conflict('Email already in use', 'email', data.email));
+    }
+    
+    const result = await repo.create(data);
+    
+    if (result.success) {
+      logger.app.info({ userId: result.value.id, email: result.value.email }, 'User created');
+    } else {
+      logger.error.error({ error: result.error }, 'Failed to create user');
+    }
+    
+    return result;
+  },
+});
+```
+
+```typescript HTTP handler logging
+import type { IHttpAdapter } from '@ndulojs/core';
+import type { IUserService } from '../../../application/services/user.service';
+
+export const registerUserRoutes = (
+  app: IHttpAdapter,
+  service: IUserService,
+  logger: LoggerSuite,
+) => {
+  app.post('/users', async ({ body }) => {
+    const requestId = crypto.randomUUID();
+    const log = logger.context({ requestId });
+    
+    log.app.info({ body }, 'Creating user');
+    
+    const result = await service.createUser(body);
+    
+    if (result.success) {
+      log.app.info({ userId: result.value.id }, 'User created successfully');
+    } else {
+      log.app.error({ error: result.error }, 'User creation failed');
+    }
+    
+    return result;
+  });
+};
+```
+
+```typescript Repository logging
+import type { Database } from '../../../database';
+import type { LoggerSuite } from '@ndulojs/core';
+import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+
+export const createUserRepository = (db: Database, logger: LoggerSuite) => ({
+  async create(data: CreateUserDto) {
+    logger.app.debug({ data }, 'Inserting user into database');
+    
+    try {
+      const [user] = await db.insert(users).values(data).returning();
+      logger.app.debug({ userId: user.id }, 'User inserted successfully');
+      return Ok(user);
+    } catch (error) {
+      logger.error.error({ error, data }, 'Database insert failed');
+      return Err(ErrorFactory.database('Failed to create user', error, 'INSERT', 'users'));
+    }
+  },
+});
+```
+</CodeGroup>
+
+## Pretty mode vs production mode
+
+### Development (pretty: true)
+
+Colorized terminal output, human-readable:
+
+```typescript
+const logger = createLogger({ pretty: true });
+
+logger.app.info({ userId: '123' }, 'User logged in');
+```
+
+Output:
+
+```
+[14:23:45.123] INFO: User logged in
+    userId: "123"
+```
+
+### Production (pretty: false)
+
+JSON files, one line per log entry:
+
+```typescript
+const logger = createLogger({ pretty: false, dir: 'logs' });
+
+logger.app.info({ userId: '123' }, 'User logged in');
+```
+
+Writes to `logs/app/2026-03-03.log`:
+
+```json
+{"level":30,"time":1678886625123,"msg":"User logged in","userId":"123"}
+```
+
+<Info>
+Use `pretty: true` in development for readability. Use `pretty: false` in production to ship logs to aggregation tools.
+</Info>
+
+## Log rotation
+
+Logs are automatically rotated daily:
+
+```
+logs/
+├── app/
+│   ├── 2026-03-01.log
+│   ├── 2026-03-02.log
+│   └── 2026-03-03.log  ← current day
+├── http/
+│   ├── 2026-03-01.log
+│   ├── 2026-03-02.log
+│   └── 2026-03-03.log
+└── error/
+    ├── 2026-03-01.log
+    ├── 2026-03-02.log
+    └── 2026-03-03.log
+```
+
+Old logs are kept for `retainDays` (default: 30), then deleted automatically.
+
+## Accessing raw Pino
+
+Use the `pino` escape hatch for Pino-specific features:
+
+```typescript
+const logger = createLogger({ pretty: true });
+
+// Access raw Pino instance
+logger.app.pino.level = 'debug';
+logger.app.pino.info({ custom: 'field' }, 'Direct Pino call');
+```
+
+<Warning>
+Using `.pino` directly bypasses NduloJS abstractions. Stick to the `NduloLogger` interface when possible.
+</Warning>
+
+## Best practices
+
+<Accordion title="Use context for request tracking">
+Bind `requestId` to all logs in a request:
+
+```typescript
+app.get('/users/:id', async ({ params }) => {
+  const requestId = crypto.randomUUID();
+  const log = logger.context({ requestId });
+  
+  log.app.info('Fetching user');
+  const result = await userService.getUser(params.id, log);
+  log.app.info('User fetched');
+  
+  return result;
+});
+```
+</Accordion>
+
+<Accordion title="Log errors with stack traces">
+Include error objects in log context:
+
+```typescript
+try {
+  await riskyOperation();
+} catch (error) {
+  logger.error.error({ error, stack: error.stack }, 'Operation failed');
+}
+```
+</Accordion>
+
+<Accordion title="Use appropriate log levels">
+- `trace`/`debug`: Development only
+- `info`: Normal operations (default)
+- `warn`: Recoverable issues (e.g. retry after failure)
+- `error`: Errors that need investigation
+- `fatal`: System-critical failures
+</Accordion>
+
+<Accordion title="Inject logger into services">
+Pass the logger via dependency injection:
+
+```typescript
+const container = createContainer()
+  .register('Logger', () => createLogger({ pretty: true }))
+  .register('UserService', (c) => createUserService(
+    c.resolve('UserRepository'),
+    c.resolve('Logger'),
+  ));
+```
+</Accordion>
+
+<Accordion title="Don't log sensitive data">
+Never log passwords, tokens, or PII:
+
+```typescript
+// ❌ Bad
+logger.app.info({ password: user.password }, 'User created');
+
+// ✅ Good
+logger.app.info({ userId: user.id, email: user.email }, 'User created');
+```
+</Accordion>
+
+## Related concepts
+
+- [HTTP Adapter](/concepts/http-adapter) — Automatic request/response logging
+- [Clean Architecture](/concepts/architecture) — Injecting loggers into services
+- [Dependency Injection](/concepts/dependency-injection) — Managing logger instances

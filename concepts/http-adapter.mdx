@@ -1,0 +1,510 @@
+---
+title: HTTP adapter
+description: Framework-agnostic HTTP layer powered by Elysia with automatic Result mapping
+---
+
+NduloJS provides an HTTP adapter that abstracts Elysia behind a clean, framework-agnostic interface. The adapter automatically maps `Result<T, AppError>` to HTTP responses, handles request/response logging, and supports Swagger/OpenAPI generation.
+
+## Why an adapter?
+
+The adapter pattern keeps framework details isolated:
+
+- **Swap frameworks** — replace Elysia with Fastify or Hono without touching business logic
+- **Simplify handlers** — return `Ok(value)` or `Err(error)`, not HTTP responses
+- **Consistent API** — same interface across all routes, no framework leakage
+
+<Info>
+Elysia is fast, but the adapter ensures you can switch if needed. All Elysia-specific code lives inside `@ndulojs/core` — your app code stays portable.
+</Info>
+
+## Core types
+
+### IHttpAdapter
+
+The main interface for registering routes:
+
+```typescript packages/core/src/http/types.ts
+export interface IHttpAdapter {
+  get(path: string, handler: Handler, meta?: RouteMeta): this;
+  post(path: string, handler: Handler, meta?: RouteMeta): this;
+  put(path: string, handler: Handler, meta?: RouteMeta): this;
+  patch(path: string, handler: Handler, meta?: RouteMeta): this;
+  delete(path: string, handler: Handler, meta?: RouteMeta): this;
+  
+  group(prefix: string, fn: (app: this) => void): this;
+  use(plugin: unknown): this;
+  
+  getElysia(): unknown;
+  listen(port: number): void;
+  stop(): Promise<void>;
+}
+```
+
+### Handler type
+
+A handler receives a `RequestContext` and returns a `Result<T, AppError>` or a raw value:
+
+```typescript packages/core/src/http/types.ts
+export type Handler<T = unknown> = (
+  ctx: RequestContext,
+) => Promise<Result<T, AppError> | T> | Result<T, AppError> | T;
+```
+
+### RequestContext
+
+Framework-agnostic request context:
+
+```typescript packages/core/src/http/types.ts
+export type RequestContext = {
+  readonly request: Request;
+  readonly params: Record<string, string>;
+  readonly query: Record<string, string>;
+  readonly body: unknown;
+  readonly headers: Record<string, string>;
+  readonly path: string;
+  readonly method: HttpMethod;
+};
+```
+
+<Warning>
+`RequestContext` contains no Elysia types. If you need Elysia-specific features, use the escape hatch: `app.getElysia()`
+</Warning>
+
+## Creating an app
+
+```typescript
+import { createApp } from '@ndulojs/core';
+
+const { app, logger } = await createApp({
+  port: 3000,
+  logger: {
+    level: 'info',
+    pretty: true, // colorized terminal output for dev
+  },
+  swagger: {
+    enabled: true,
+    path: '/docs',
+    title: 'My API',
+    version: '1.0.0',
+  },
+});
+
+app.listen(3000);
+logger.app.info('Server started on port 3000');
+```
+
+<Info>
+`createApp()` returns both the HTTP adapter **and** a logger instance. The logger is pre-wired for request/response logging.
+</Info>
+
+## Registering routes
+
+### Basic routes
+
+```typescript
+import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+
+app.get('/health', () => {
+  return Ok({ status: 'ok', timestamp: Date.now() });
+});
+
+app.get('/users/:id', async ({ params }) => {
+  const user = await db.findById(params.id);
+  
+  if (!user) {
+    return Err(ErrorFactory.notFound('User not found', 'User', params.id));
+  }
+  
+  return Ok(user);
+});
+
+app.post('/users', async ({ body }) => {
+  const parsed = CreateUserSchema.safeParse(body);
+  
+  if (!parsed.success) {
+    return Err(ErrorFactory.validation('Invalid user data', parsed.error.errors.map(e => ({
+      field: e.path.join('.'),
+      message: e.message,
+    }))));
+  }
+  
+  const user = await db.createUser(parsed.data);
+  return Ok(user);
+});
+```
+
+### Route groups
+
+Group routes under a common prefix:
+
+```typescript
+app.group('/api/v1', (api) => {
+  api.group('/users', (users) => {
+    users.get('/', () => getAllUsers());
+    users.get('/:id', ({ params }) => getUser(params.id));
+    users.post('/', ({ body }) => createUser(body));
+    users.delete('/:id', ({ params }) => deleteUser(params.id));
+  });
+  
+  api.group('/orders', (orders) => {
+    orders.get('/', () => getAllOrders());
+    orders.post('/', ({ body }) => createOrder(body));
+  });
+});
+```
+
+### With metadata (Swagger)
+
+Add metadata for OpenAPI documentation:
+
+```typescript
+app.get('/users/:id', 
+  ({ params }) => userService.getUser(params.id),
+  {
+    tags: ['users'],
+    summary: 'Get user by ID',
+    description: 'Fetches a single user by their unique identifier',
+  }
+);
+
+app.post('/users',
+  ({ body }) => userService.createUser(body),
+  {
+    tags: ['users'],
+    summary: 'Create a new user',
+  }
+);
+```
+
+<Info>
+Metadata is optional. If you don't provide it, routes still work — they just won't appear in Swagger docs with descriptions.
+</Info>
+
+## Automatic Result mapping
+
+The adapter uses a middleware to convert `Result<T, AppError>` to HTTP responses automatically:
+
+```typescript packages/core/src/http/middlewares/result.middleware.ts
+export const processHandlerResult = (response: unknown): { body: unknown; status: number } => {
+  // If it's a Result, map error types to HTTP status codes
+  if (isResult(response)) {
+    if (response.success) {
+      return { body: response.value, status: 200 };
+    }
+    
+    // Map AppError.statusCode to HTTP status
+    return { body: response.error, status: response.error.statusCode };
+  }
+  
+  // Raw values pass through
+  return { body: response, status: 200 };
+};
+```
+
+You never write status codes manually:
+
+<CodeGroup>
+```typescript Handler
+app.get('/users/:id', async ({ params }) => {
+  // Just return Ok or Err — the adapter handles status codes
+  return userService.getUser(params.id);
+});
+```
+
+```typescript Service
+export const createUserService = (repo: IUserRepository) => ({
+  async getUser(id: string): Promise<Result<User, AppError>> {
+    const result = await repo.findById(id);
+    if (!result.success) return result;
+    
+    if (result.value === null) {
+      // 404 status code is set automatically
+      return Err(ErrorFactory.notFound('User not found', 'User', id));
+    }
+    
+    return Ok(result.value); // 200 status code
+  },
+});
+```
+</CodeGroup>
+
+| Error type | HTTP status |
+|------------|-------------|
+| `ValidationError` | 422 |
+| `NotFoundError` | 404 |
+| `UnauthorizedError` | 401 |
+| `ForbiddenError` | 403 |
+| `ConflictError` | 409 |
+| `BusinessError` | 400 |
+| `DatabaseError` | 500 |
+| `ExternalServiceError` | 502 |
+| `InternalServerError` | 500 |
+| `TooManyRequestsError` | 429 |
+
+## Request/response logging
+
+The adapter logs all requests and responses automatically:
+
+```typescript packages/core/src/http/adapter.ts
+elysia.onRequest((ctx) => {
+  const id = generateRequestId();
+  requestIds.set(ctx.request, id);
+  requestTimes.set(ctx.request, Date.now());
+  logger.http.info(createRequestLog(ctx.request, id), 'Incoming request');
+});
+
+elysia.onAfterHandle((ctx) => {
+  const id = requestIds.get(ctx.request) ?? 'unknown';
+  const start = requestTimes.get(ctx.request) ?? Date.now();
+  const level = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
+  logger.http[level](createResponseLog(ctx.request, id, status, start), 'Request completed');
+});
+```
+
+Sample log output:
+
+```json
+{
+  "level": "info",
+  "time": 1678886400000,
+  "msg": "Incoming request",
+  "requestId": "req_abc123",
+  "method": "GET",
+  "path": "/users/1",
+  "userAgent": "curl/7.68.0"
+}
+
+{
+  "level": "info",
+  "time": 1678886400123,
+  "msg": "Request completed",
+  "requestId": "req_abc123",
+  "method": "GET",
+  "path": "/users/1",
+  "statusCode": 200,
+  "durationMs": 123
+}
+```
+
+<Info>
+Logs are written to `logs/http/` by default. See [Logging](/concepts/logging) for configuration.
+</Info>
+
+## Swagger/OpenAPI
+
+Enable Swagger docs in `createApp()`:
+
+```typescript
+const { app } = await createApp({
+  port: 3000,
+  swagger: {
+    enabled: true,
+    path: '/docs',
+    title: 'My API',
+    version: '1.0.0',
+    description: 'A NduloJS API with automatic OpenAPI generation',
+    tags: [
+      { name: 'users', description: 'User management endpoints' },
+      { name: 'orders', description: 'Order management endpoints' },
+    ],
+  },
+});
+```
+
+Swagger UI is available at `http://localhost:3000/docs`.
+
+## Using Elysia plugins
+
+You can use any Elysia plugin via `app.use()`:
+
+```typescript
+import { jwt } from '@elysiajs/jwt';
+import { cors } from '@elysiajs/cors';
+
+const { app } = await createApp({ port: 3000 });
+
+app.use(cors());
+app.use(jwt({ name: 'jwt', secret: process.env.JWT_SECRET! }));
+
+app.get('/protected', async (ctx) => {
+  // JWT plugin adds a `jwt` object to the context
+  const elysia = app.getElysia();
+  // Access Elysia-specific context via escape hatch
+  return Ok({ message: 'Protected route' });
+});
+```
+
+<Warning>
+Elysia plugins may add fields to the context that aren't in `RequestContext`. Use `app.getElysia()` to access them, but this breaks framework abstraction.
+</Warning>
+
+## Escape hatch: getElysia()
+
+If you need direct Elysia access:
+
+```typescript
+const elysia = app.getElysia();
+
+// Now you can use any Elysia API
+elysia.onError(({ error, code }) => {
+  console.error('Unhandled error:', error);
+});
+```
+
+<Info>
+Use `getElysia()` sparingly. It couples your code to Elysia, defeating the purpose of the adapter.
+</Info>
+
+## Real-world example
+
+<CodeGroup>
+```typescript src/index.ts
+import { createApp } from '@ndulojs/core';
+import { container } from './container';
+import { registerUserRoutes } from './modules/users/infrastructure/http/controllers/user.controller';
+import { registerOrderRoutes } from './modules/orders/infrastructure/http/controllers/order.controller';
+
+const { app, logger } = await createApp({
+  port: 3000,
+  logger: {
+    level: 'info',
+    pretty: process.env.NODE_ENV === 'development',
+    dir: 'logs',
+  },
+  swagger: {
+    enabled: true,
+    path: '/docs',
+    title: 'E-commerce API',
+    version: '1.0.0',
+  },
+});
+
+app.get('/health', () => Ok({ status: 'ok' }));
+
+app.group('/api/v1', (api) => {
+  registerUserRoutes(api, container.resolve('UserService'));
+  registerOrderRoutes(api, container.resolve('OrderService'));
+});
+
+app.listen(3000);
+logger.app.info('Server started on port 3000');
+```
+
+```typescript user.controller.ts
+import type { IHttpAdapter } from '@ndulojs/core';
+import { Err, ErrorFactory } from '@ndulojs/core';
+import type { IUserService } from '../../../application/services/user.service';
+import { CreateUserSchema } from '../../../application/dtos/user.dto';
+
+export const registerUserRoutes = (app: IHttpAdapter, service: IUserService) => {
+  app.group('/users', (users) => {
+    users.get('/', 
+      () => service.getAllUsers(),
+      { tags: ['users'], summary: 'List all users' }
+    );
+    
+    users.get('/:id',
+      ({ params }) => service.getUser(params.id),
+      { tags: ['users'], summary: 'Get user by ID' }
+    );
+    
+    users.post('/',
+      async ({ body }) => {
+        const parsed = CreateUserSchema.safeParse(body);
+        if (!parsed.success) {
+          return Err(ErrorFactory.validation('Invalid user data', parsed.error.errors.map(e => ({
+            field: e.path.join('.'),
+            message: e.message,
+          }))));
+        }
+        return service.createUser(parsed.data);
+      },
+      { tags: ['users'], summary: 'Create a new user' }
+    );
+    
+    users.delete('/:id',
+      ({ params }) => service.deleteUser(params.id),
+      { tags: ['users'], summary: 'Delete user' }
+    );
+  });
+};
+```
+</CodeGroup>
+
+## Best practices
+
+<Accordion title="Keep handlers thin">
+Handlers should delegate to services, not contain business logic:
+
+```typescript
+// ❌ Bad — business logic in handler
+app.post('/users', async ({ body }) => {
+  const parsed = CreateUserSchema.safeParse(body);
+  if (!parsed.success) return Err(ErrorFactory.validation(...));
+  
+  const existing = await db.findByEmail(parsed.data.email);
+  if (existing) return Err(ErrorFactory.conflict(...));
+  
+  const user = await db.create(parsed.data);
+  return Ok(user);
+});
+
+// ✅ Good — delegate to service
+app.post('/users', ({ body }) => {
+  return userService.createUser(body);
+});
+```
+</Accordion>
+
+<Accordion title="Validate input early">
+Validate request bodies before calling services:
+
+```typescript
+app.post('/users', async ({ body }) => {
+  const parsed = CreateUserSchema.safeParse(body);
+  if (!parsed.success) {
+    return Err(ErrorFactory.validation('Invalid user data', parsed.error.errors.map(e => ({
+      field: e.path.join('.'),
+      message: e.message,
+    }))));
+  }
+  
+  return service.createUser(parsed.data);
+});
+```
+</Accordion>
+
+<Accordion title="Use route groups for versioning">
+Group routes by API version:
+
+```typescript
+app.group('/api/v1', (v1) => {
+  v1.get('/users', () => getAllUsersV1());
+});
+
+app.group('/api/v2', (v2) => {
+  v2.get('/users', () => getAllUsersV2());
+});
+```
+</Accordion>
+
+<Accordion title="Add Swagger metadata to public APIs">
+Document your API for consumers:
+
+```typescript
+app.get('/users/:id',
+  ({ params }) => service.getUser(params.id),
+  {
+    tags: ['users'],
+    summary: 'Get user by ID',
+    description: 'Fetches a single user by their unique identifier. Returns 404 if not found.',
+  }
+);
+```
+</Accordion>
+
+## Related concepts
+
+- [Result Pattern](/concepts/result-pattern) — How Results map to HTTP status codes
+- [Clean Architecture](/concepts/architecture) — Keeping HTTP concerns in controllers
+- [Logging](/concepts/logging) — Request/response logging configuration

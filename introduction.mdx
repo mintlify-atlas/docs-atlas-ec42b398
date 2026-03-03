@@ -1,0 +1,144 @@
+---
+title: Introduction
+description: NduloJS is an opinionated TypeScript backend framework built on Elysia that enforces Clean Architecture structurally
+---
+
+# Welcome to NduloJS
+
+An opinionated TypeScript backend framework built on [Elysia](https://elysiajs.com) that enforces Clean Architecture structurally — dependency injection, explicit error handling, and layered modules — so your codebase stays consistent as it grows.
+
+<Note>
+  NduloJS is designed to help you build scalable backend applications with enforced best practices from day one.
+</Note>
+
+## Why NduloJS?
+
+NduloJS eliminates architectural debates by providing a structured, opinionated approach to backend development. No more wondering how to organize your code, handle errors, or manage dependencies — it's all built in.
+
+<CardGroup cols={2}>
+  <Card title="Result pattern" icon="check-circle" href="/concepts/result-pattern">
+    No try/catch. Errors are typed values: `Result<T, AppError>`. Forces explicit error handling at compile time.
+  </Card>
+  
+  <Card title="DI container" icon="box" href="/concepts/dependency-injection">
+    Functional, type-safe dependency injection with zero decorators. Circular dependency detection included.
+  </Card>
+  
+  <Card title="HTTP adapter" icon="globe" href="/concepts/http-adapter">
+    Elysia under the hood, abstracted behind a clean interface. Automatic error-to-status mapping.
+  </Card>
+  
+  <Card title="CLI scaffolding" icon="terminal" href="/cli/overview">
+    Generate modules, submodules, and full projects in seconds with proper Clean Architecture structure.
+  </Card>
+  
+  <Card title="Structured logger" icon="file-lines" href="/concepts/logging">
+    Three channels (app, http, error) with daily rotation. Per-request context support built-in.
+  </Card>
+  
+  <Card title="Clean Architecture" icon="layer-group" href="/concepts/architecture">
+    Enforced layering with application, domain, and infrastructure layers. Modules are self-contained.
+  </Card>
+</CardGroup>
+
+## Key features
+
+### Type-safe error handling
+
+Every handler returns `Ok(value)` or `Err(error)`. The framework automatically maps errors to HTTP status codes:
+
+```typescript
+app.get('/users/:id', async ({ params }) => {
+  const user = await db.findById(params.id);
+  if (!user) return Err(ErrorFactory.notFound('User not found', 'User', params.id));
+  return Ok(user);
+});
+```
+
+<Tip>
+  The Result pattern eliminates uncontrolled exceptions and makes error handling explicit in your type signatures.
+</Tip>
+
+### Functional dependency injection
+
+No decorators, no metadata reflection — just pure functions:
+
+```typescript
+const container = createContainer()
+  .register('Config',         ()  => loadConfig())
+  .register('Database',       (c) => createDatabase(c.resolve('Config')))
+  .register('UserRepository', (c) => createUserRepository(c.resolve('Database')))
+  .register('UserService',    (c) => createUserService(c.resolve('UserRepository')));
+
+const userService = container.resolve('UserService');
+```
+
+### Enforced Clean Architecture
+
+Generate modules with the CLI and get proper layering automatically:
+
+```bash
+ndulo generate module farms
+```
+
+Creates:
+
+```
+src/modules/farms/
+├── events/farm.events.ts
+├── application/
+│   ├── dtos/farm.dto.ts
+│   ├── ports/farm.port.ts
+│   └── services/farm.service.ts
+└── infrastructure/
+    ├── persistence/farm.repository.ts
+    └── http/controllers/farm.controller.ts
+```
+
+## Error types mapping
+
+All errors are automatically mapped to appropriate HTTP status codes:
+
+| Error Factory Method | HTTP Status | Use Case |
+|---------------------|-------------|----------|
+| `ErrorFactory.notFound()` | 404 | Resource doesn't exist |
+| `ErrorFactory.unauthorized()` | 401 | Missing or invalid authentication |
+| `ErrorFactory.forbidden()` | 403 | Authenticated but not allowed |
+| `ErrorFactory.validation()` | 422 | Input validation failed |
+| `ErrorFactory.conflict()` | 409 | Resource already exists |
+| `ErrorFactory.business()` | 400 | Business rule violation |
+| `ErrorFactory.database()` | 500 | Database operation failed |
+| `ErrorFactory.externalService()` | 502 | External API call failed |
+| `ErrorFactory.tooManyRequests()` | 429 | Rate limit exceeded |
+
+<Warning>
+  Always use `ErrorFactory` to create errors. This ensures proper error structure and automatic HTTP status mapping.
+</Warning>
+
+## Getting started
+
+Ready to build your first NduloJS application? Start with the installation guide:
+
+<Card title="Installation" icon="download" href="/installation">
+  Install NduloJS and set up your development environment
+</Card>
+
+Or jump straight into code:
+
+<Card title="Quickstart" icon="rocket" href="/quickstart">
+  Build your first API endpoint in under 5 minutes
+</Card>
+
+## Community and support
+
+NduloJS is MIT licensed and open source. Contributions are welcome!
+
+<CardGroup cols={2}>
+  <Card title="GitHub" icon="github" href="https://github.com/ndulomk/ndulojs">
+    View source code and contribute
+  </Card>
+  
+  <Card title="Examples" icon="code" href="https://github.com/ndulomk/ndulojs/tree/main/examples">
+    Explore example applications
+  </Card>
+</CardGroup>
