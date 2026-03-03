@@ -75,8 +75,8 @@ export const Err = <E>(error: E): Failure<E> => ({
 
 <CodeGroup>
 ```typescript Example usage
-import { Ok, Err, ErrorFactory } from '@ndulojs/core';
-import type { Result, AppError } from '@ndulojs/core';
+import { Ok, Err, ErrorFactory } from 'ndulojs';
+import type { Result, AppError } from 'ndulojs';
 
 type User = { id: string; name: string; email: string };
 
@@ -244,7 +244,7 @@ export const ErrorFactory = {
 
 <CodeGroup>
 ```typescript Service example
-import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+import { Ok, Err, ErrorFactory } from 'ndulojs';
 
 export const createOrderService = (repo: IOrderRepository) => ({
   async createOrder(data: CreateOrderDto): Promise<Result<Order, AppError>> {
@@ -268,7 +268,7 @@ export const createOrderService = (repo: IOrderRepository) => ({
 ```
 
 ```typescript Repository example
-import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+import { Ok, Err, ErrorFactory } from 'ndulojs';
 
 export const createOrderRepository = (db: Database): IOrderRepository => ({
   async create(data) {
@@ -331,7 +331,7 @@ export const map = <T, U, E>(
 ```
 
 ```typescript Example
-import { map } from '@ndulojs/core';
+import { map } from 'ndulojs';
 
 const result = await getUser(id);
 const nameResult = map(result, user => user.name);
@@ -350,7 +350,7 @@ export const flatMap = <T, U, E>(
 ```
 
 ```typescript Example
-import { flatMap } from '@ndulojs/core';
+import { flatMap } from 'ndulojs';
 
 const userResult = await getUser(id);
 const ordersResult = flatMap(userResult, user => getOrders(user.id));
@@ -368,7 +368,7 @@ export const unwrapOrElse = <T, E>(result: Result<T, E>, fn: (error: E) => T): T
 ```
 
 ```typescript Example
-import { unwrap, unwrapOr } from '@ndulojs/core';
+import { unwrap, unwrapOr } from 'ndulojs';
 
 const result = await getUser(id);
 
@@ -394,7 +394,7 @@ export const combine = <T, E>(results: Result<T, E>[]): Result<T[], E>
 ```
 
 ```typescript Example
-import { combine } from '@ndulojs/core';
+import { combine } from 'ndulojs';
 
 const results = await Promise.all([
   getUser('1'),
@@ -419,7 +419,7 @@ export const matchError = <T>(
 ```
 
 ```typescript Example
-import { matchError } from '@ndulojs/core';
+import { matchError } from 'ndulojs';
 
 const result = await userService.createUser(data);
 

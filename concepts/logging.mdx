@@ -93,7 +93,7 @@ export type LogContext = {
 ### Standalone logger
 
 ```typescript
-import { createLogger } from '@ndulojs/core';
+import { createLogger } from 'ndulojs';
 
 const logger = createLogger({
   level: 'info',          // Minimum log level
@@ -112,7 +112,7 @@ logger.error.error({ error: 'Database connection failed' }, 'Critical error');
 `createApp()` returns a logger automatically:
 
 ```typescript
-import { createApp } from '@ndulojs/core';
+import { createApp } from 'ndulojs';
 
 const { app, logger } = await createApp({
   port: 3000,
@@ -238,8 +238,8 @@ userServiceLogger.error({ userId: '123' }, 'User creation failed');
 
 <CodeGroup>
 ```typescript Service logging
-import type { LoggerSuite } from '@ndulojs/core';
-import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+import type { LoggerSuite } from 'ndulojs';
+import { Ok, Err, ErrorFactory } from 'ndulojs';
 import type { IUserRepository } from '../ports/user.port';
 
 export const createUserService = (
@@ -274,7 +274,7 @@ export const createUserService = (
 ```
 
 ```typescript HTTP handler logging
-import type { IHttpAdapter } from '@ndulojs/core';
+import type { IHttpAdapter } from 'ndulojs';
 import type { IUserService } from '../../../application/services/user.service';
 
 export const registerUserRoutes = (
@@ -303,8 +303,8 @@ export const registerUserRoutes = (
 
 ```typescript Repository logging
 import type { Database } from '../../../database';
-import type { LoggerSuite } from '@ndulojs/core';
-import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+import type { LoggerSuite } from 'ndulojs';
+import { Ok, Err, ErrorFactory } from 'ndulojs';
 
 export const createUserRepository = (db: Database, logger: LoggerSuite) => ({
   async create(data: CreateUserDto) {

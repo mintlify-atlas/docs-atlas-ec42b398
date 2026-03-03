@@ -122,7 +122,7 @@ Each `AppError` type includes its appropriate HTTP status code:
 ### Example usage
 
 ```typescript
-import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+import { Ok, Err, ErrorFactory } from 'ndulojs';
 
 app.get('/users/:id', async ({ params }) => {
   const user = await findUser(params.id);
@@ -330,8 +330,8 @@ You can implement middleware-like behavior by creating reusable handler function
 <CodeGroup>
 
 ```typescript Authentication helper
-import { Err, ErrorFactory } from '@ndulojs/core';
-import type { RequestContext, Result } from '@ndulojs/core';
+import { Err, ErrorFactory } from 'ndulojs';
+import type { RequestContext, Result } from 'ndulojs';
 
 const requireAuth = async (
   ctx: RequestContext
@@ -365,7 +365,7 @@ app.get('/me', async (ctx) => {
 ```
 
 ```typescript Validation helper
-import { Err, ErrorFactory } from '@ndulojs/core';
+import { Err, ErrorFactory } from 'ndulojs';
 
 const validateEmail = (email: unknown): Result<string, AppError> => {
   if (typeof email !== 'string' || !email.includes('@')) {

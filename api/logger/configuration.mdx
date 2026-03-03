@@ -237,7 +237,7 @@ This prevents data loss when the application restarts.
 <CodeGroup>
 
 ```typescript Development
-import { createLogger } from '@ndulojs/core';
+import { createLogger } from 'ndulojs';
 
 const logger = createLogger({
   pretty: true,      // Coloured terminal output
@@ -250,7 +250,7 @@ logger.app.info('Server ready');
 ```
 
 ```typescript Production
-import { createLogger } from '@ndulojs/core';
+import { createLogger } from 'ndulojs';
 
 const logger = createLogger({
   pretty: false,     // JSON file output
@@ -265,7 +265,7 @@ logger.http.info({ method: 'GET', statusCode: 200 }, 'Request');
 ```
 
 ```typescript Staging
-import { createLogger } from '@ndulojs/core';
+import { createLogger } from 'ndulojs';
 
 const logger = createLogger({
   pretty: false,
@@ -278,7 +278,7 @@ logger.app.debug({ config }, 'Loaded configuration');
 ```
 
 ```typescript High-volume production
-import { createLogger } from '@ndulojs/core';
+import { createLogger } from 'ndulojs';
 
 const logger = createLogger({
   pretty: false,
@@ -302,7 +302,7 @@ logger.error.error({ error }, 'Database connection lost'); // Written
 Configure logging based on `NODE_ENV`:
 
 ```typescript
-import { createLogger, type LoggerConfig } from '@ndulojs/core';
+import { createLogger, type LoggerConfig } from 'ndulojs';
 
 const config: LoggerConfig = {
   level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',

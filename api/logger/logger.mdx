@@ -46,7 +46,7 @@ function createLogger(config?: LoggerConfig): LoggerSuite
 <CodeGroup>
 
 ```typescript Development
-import { createLogger } from '@ndulojs/core';
+import { createLogger } from 'ndulojs';
 
 // Pretty print to terminal with debug level
 const logger = createLogger({ 
@@ -59,7 +59,7 @@ logger.app.debug({ port: 3000 }, 'Listening on port');
 ```
 
 ```typescript Production
-import { createLogger } from '@ndulojs/core';
+import { createLogger } from 'ndulojs';
 
 // JSON files with daily rotation
 const logger = createLogger({ 
@@ -73,7 +73,7 @@ logger.error.error({ error: err.message }, 'Unhandled exception');
 ```
 
 ```typescript Request-scoped logging
-import { createLogger } from '@ndulojs/core';
+import { createLogger } from 'ndulojs';
 
 const logger = createLogger();
 

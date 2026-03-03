@@ -76,7 +76,7 @@ Ports are contracts. Define what operations your module supports.
 **src/modules/products/application/ports/product.port.ts:**
 
 ```ts
-import type { Result, AppError } from '@ndulojs/core';
+import type { Result, AppError } from 'ndulojs';
 import type { ProductDTO, CreateProductDTO, UpdateProductDTO } from '../dtos/product.dto.js';
 
 export interface IProductRepository {
@@ -197,8 +197,8 @@ Services contain business logic and return Results.
 **src/modules/products/application/services/product.service.ts:**
 
 ```ts
-import { Ok, Err, ErrorFactory } from '@ndulojs/core';
-import type { Result, AppError } from '@ndulojs/core';
+import { Ok, Err, ErrorFactory } from 'ndulojs';
+import type { Result, AppError } from 'ndulojs';
 import type { IProductRepository, IProductService } from '../ports/product.port.js';
 import type { ProductDTO, CreateProductDTO, UpdateProductDTO } from '../dtos/product.dto.js';
 
@@ -278,7 +278,7 @@ Controllers handle HTTP routing and delegate to services.
 **src/modules/products/infrastructure/http/controllers/product.controller.ts:**
 
 ```ts
-import type { IHttpAdapter } from '@ndulojs/core';
+import type { IHttpAdapter } from 'ndulojs';
 import type { IProductService } from '../../../application/ports/product.port.js';
 import type { CreateProductDTO, UpdateProductDTO } from '../../../application/dtos/product.dto.js';
 
@@ -320,7 +320,7 @@ export const createProductController = (
 <Accordion title="Add Zod validation in controller">
   ```ts
   import { CreateProductSchema } from '../../../application/dtos/product.dto.js';
-  import { ErrorFactory, Err } from '@ndulojs/core';
+  import { ErrorFactory, Err } from 'ndulojs';
 
   r.post('/', async ({ body }) => {
     const parsed = CreateProductSchema.safeParse(body);
@@ -342,7 +342,7 @@ export const createProductController = (
 Wire everything together in `src/index.ts`:
 
 ```ts
-import { createApp, createContainer } from '@ndulojs/core';
+import { createApp, createContainer } from 'ndulojs';
 import { createProductRepository } from './modules/products/infrastructure/persistence/product.repository.js';
 import { createProductService } from './modules/products/application/services/product.service.js';
 import { createProductController } from './modules/products/infrastructure/http/controllers/product.controller.js';

@@ -145,7 +145,7 @@ beforeEach(() => {
 Test services with real dependency injection:
 
 ```ts
-import { createContainer } from '@ndulojs/core';
+import { createContainer } from 'ndulojs';
 import { describe, it, expect, beforeEach } from 'vitest';
 
 describe('UserService (with DI)', () => {
@@ -185,7 +185,7 @@ Test helpers like `map`, `flatMap`, and `combine`:
 
 ```ts
 import { describe, it, expect } from 'vitest';
-import { Ok, Err, map, flatMap, combine, ErrorFactory } from '@ndulojs/core';
+import { Ok, Err, map, flatMap, combine, ErrorFactory } from 'ndulojs';
 
 describe('map', () => {
   it('transforms the value when Ok', () => {
@@ -237,7 +237,7 @@ Test controllers by mocking services:
 
 ```ts
 import { describe, it, expect, vi } from 'vitest';
-import { createApp, Ok, Err, ErrorFactory } from '@ndulojs/core';
+import { createApp, Ok, Err, ErrorFactory } from 'ndulojs';
 import { createUserController } from './user.controller.js';
 import type { IUserService } from '../../application/ports/user.port.js';
 
@@ -376,7 +376,7 @@ it('returns validation error with correct structure', async () => {
 Test scoped services (e.g., per-request logger):
 
 ```ts
-import { createContainer } from '@ndulojs/core';
+import { createContainer } from 'ndulojs';
 
 it('scoped dependencies are isolated per scope', () => {
   const container = createContainer()
@@ -398,7 +398,7 @@ Test the full stack with a real HTTP server:
 
 ```ts
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createApp, createContainer } from '@ndulojs/core';
+import { createApp, createContainer } from 'ndulojs';
 
 let app: Awaited<ReturnType<typeof createApp>>;
 let server: ReturnType<typeof app.listen>;

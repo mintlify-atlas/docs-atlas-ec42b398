@@ -92,7 +92,7 @@ function createApp(config: AppConfig): Promise<AppInstance>
 <CodeGroup>
 
 ```typescript Basic setup
-import { createApp } from '@ndulojs/core';
+import { createApp } from 'ndulojs';
 
 const { app, logger } = await createApp({ 
   port: 3000,
@@ -106,7 +106,7 @@ app.listen(3000);
 ```
 
 ```typescript Development configuration
-import { createApp } from '@ndulojs/core';
+import { createApp } from 'ndulojs';
 
 const { app, logger } = await createApp({
   port: 3000,
@@ -130,7 +130,7 @@ logger.app.info('API docs available at http://localhost:3000/docs');
 ```
 
 ```typescript Production configuration
-import { createApp } from '@ndulojs/core';
+import { createApp } from 'ndulojs';
 
 const { app, logger } = await createApp({
   port: Number(process.env.PORT) || 3000,
@@ -150,7 +150,7 @@ app.listen(Number(process.env.PORT) || 3000);
 ```
 
 ```typescript Disable logging
-import { createApp } from '@ndulojs/core';
+import { createApp } from 'ndulojs';
 
 const { app, logger } = await createApp({
   port: 3000,

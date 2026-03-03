@@ -97,8 +97,8 @@ export type UserDto = {
 Ports are interfaces that define contracts without implementation details:
 
 ```typescript application/ports/user.port.ts
-import type { Result } from '@ndulojs/core';
-import type { AppError } from '@ndulojs/core';
+import type { Result } from 'ndulojs';
+import type { AppError } from 'ndulojs';
 import type { UserDto, CreateUserDto } from '../dtos/user.dto';
 
 export interface IUserRepository {
@@ -118,8 +118,8 @@ Ports must NEVER import infrastructure code. They define contracts that infrastr
 Services contain pure business logic:
 
 ```typescript application/services/user.service.ts
-import { Ok, Err, ErrorFactory } from '@ndulojs/core';
-import type { Result, AppError } from '@ndulojs/core';
+import { Ok, Err, ErrorFactory } from 'ndulojs';
+import type { Result, AppError } from 'ndulojs';
 import type { IUserRepository } from '../ports/user.port';
 import type { CreateUserDto, UserDto } from '../dtos/user.dto';
 
@@ -161,8 +161,8 @@ The infrastructure layer implements ports and handles external concerns:
 Repositories implement port interfaces using real databases:
 
 ```typescript infrastructure/persistence/user.repository.ts
-import { Ok, Err, ErrorFactory } from '@ndulojs/core';
-import type { Result, AppError } from '@ndulojs/core';
+import { Ok, Err, ErrorFactory } from 'ndulojs';
+import type { Result, AppError } from 'ndulojs';
 import type { IUserRepository } from '../../application/ports/user.port';
 import type { Database } from '../../../database';
 
@@ -214,8 +214,8 @@ export const createUserRepository = (db: Database): IUserRepository => ({
 Controllers handle HTTP concerns and delegate to services:
 
 ```typescript infrastructure/http/controllers/user.controller.ts
-import type { IHttpAdapter, RequestContext } from '@ndulojs/core';
-import { Err, ErrorFactory } from '@ndulojs/core';
+import type { IHttpAdapter, RequestContext } from 'ndulojs';
+import { Err, ErrorFactory } from 'ndulojs';
 import type { IUserService } from '../../../application/services/user.service';
 import { CreateUserSchema } from '../../../application/dtos/user.dto';
 
@@ -268,7 +268,7 @@ Dependencies flow inward — outer layers depend on inner layers, never the reve
 Use the [dependency injection container](/concepts/dependency-injection) to wire layers:
 
 ```typescript src/index.ts
-import { createApp, createContainer } from '@ndulojs/core';
+import { createApp, createContainer } from 'ndulojs';
 import { createDatabase } from './database';
 import { createUserRepository } from './modules/users/infrastructure/persistence/user.repository';
 import { createUserService } from './modules/users/application/services/user.service';

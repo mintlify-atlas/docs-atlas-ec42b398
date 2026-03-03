@@ -70,7 +70,7 @@ my-app/
         "test": "vitest"
       },
       "dependencies": {
-        "@ndulojs/core": "latest",
+        "ndulojs": "latest",
         "elysia": "latest",
         "zod": "latest"
       },
@@ -108,7 +108,7 @@ my-app/
     Minimal application entry point with health check:
 
     ```typescript
-    import { createApp, createContainer, Ok } from '@ndulojs/core';
+    import { createApp, createContainer, Ok } from 'ndulojs';
 
     const container = createContainer();
     const app = await createApp({ port: Number(process.env['PORT']) || 3000 });

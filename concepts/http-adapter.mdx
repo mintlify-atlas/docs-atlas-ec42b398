@@ -14,7 +14,7 @@ The adapter pattern keeps framework details isolated:
 - **Consistent API** — same interface across all routes, no framework leakage
 
 <Info>
-Elysia is fast, but the adapter ensures you can switch if needed. All Elysia-specific code lives inside `@ndulojs/core` — your app code stays portable.
+Elysia is fast, but the adapter ensures you can switch if needed. All Elysia-specific code lives inside `ndulojs` — your app code stays portable.
 </Info>
 
 ## Core types
@@ -73,7 +73,7 @@ export type RequestContext = {
 ## Creating an app
 
 ```typescript
-import { createApp } from '@ndulojs/core';
+import { createApp } from 'ndulojs';
 
 const { app, logger } = await createApp({
   port: 3000,
@@ -102,7 +102,7 @@ logger.app.info('Server started on port 3000');
 ### Basic routes
 
 ```typescript
-import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+import { Ok, Err, ErrorFactory } from 'ndulojs';
 
 app.get('/health', () => {
   return Ok({ status: 'ok', timestamp: Date.now() });
@@ -359,7 +359,7 @@ Use `getElysia()` sparingly. It couples your code to Elysia, defeating the purpo
 
 <CodeGroup>
 ```typescript src/index.ts
-import { createApp } from '@ndulojs/core';
+import { createApp } from 'ndulojs';
 import { container } from './container';
 import { registerUserRoutes } from './modules/users/infrastructure/http/controllers/user.controller';
 import { registerOrderRoutes } from './modules/orders/infrastructure/http/controllers/order.controller';
@@ -391,8 +391,8 @@ logger.app.info('Server started on port 3000');
 ```
 
 ```typescript user.controller.ts
-import type { IHttpAdapter } from '@ndulojs/core';
-import { Err, ErrorFactory } from '@ndulojs/core';
+import type { IHttpAdapter } from 'ndulojs';
+import { Err, ErrorFactory } from 'ndulojs';
 import type { IUserService } from '../../../application/services/user.service';
 import { CreateUserSchema } from '../../../application/dtos/user.dto';
 

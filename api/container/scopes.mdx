@@ -159,7 +159,7 @@ scope2.dispose();
 A common pattern for HTTP servers is to create a scope per request:
 
 ```typescript
-import { createContainer, createApp } from '@ndulojs/core';
+import { createContainer, createApp } from 'ndulojs';
 
 const container = createContainer()
   .register('Database', () => createDatabase())
@@ -338,7 +338,7 @@ Scopes make testing easier by providing isolated dependency instances:
 
 ```typescript
 import { describe, it, expect } from 'vitest';
-import { createContainer } from '@ndulojs/core';
+import { createContainer } from 'ndulojs';
 
 const container = createContainer()
   .register('Database', () => createDatabase())

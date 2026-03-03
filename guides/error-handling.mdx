@@ -10,7 +10,7 @@ NduloJS uses the **Result pattern** to make errors explicit and type-safe. No ex
 Every operation that can fail returns `Result<T, E>`:
 
 ```ts
-import { Result, AppError, Ok, Err, ErrorFactory } from '@ndulojs/core';
+import { Result, AppError, Ok, Err, ErrorFactory } from 'ndulojs';
 
 async function findUser(id: string): Promise<Result<User, AppError>> {
   const user = await db.users.findById(id);
@@ -59,7 +59,7 @@ async function findUser(id: string): Promise<Result<User, AppError>> {
     Use helpers for common patterns:
 
     ```ts
-    import { unwrapOr, map, flatMap } from '@ndulojs/core';
+    import { unwrapOr, map, flatMap } from 'ndulojs';
 
     // Provide a fallback
     const user = unwrapOr(result, defaultUser);
@@ -82,7 +82,7 @@ Create errors using `ErrorFactory`. Every method returns a typed error ready for
 For input validation failures:
 
 ```ts
-import { ErrorFactory, Err } from '@ndulojs/core';
+import { ErrorFactory, Err } from 'ndulojs';
 
 function validateEmail(email: string): Result<string, AppError> {
   if (!email.includes('@')) {
@@ -281,7 +281,7 @@ Chain operations that return Results:
     Use `combine` to run multiple operations and collect errors:
 
     ```ts
-    import { combine } from '@ndulojs/core';
+    import { combine } from 'ndulojs';
 
     const results = await Promise.all([
       validateName(data.name),
@@ -300,7 +300,7 @@ Chain operations that return Results:
     Chain without nested if-checks:
 
     ```ts
-    import { flatMap } from '@ndulojs/core';
+    import { flatMap } from 'ndulojs';
 
     return flatMap(
       await findUser(userId),
@@ -357,7 +357,7 @@ app.get('/users/:id', async ({ params }) => {
 Handle different error types:
 
 ```ts
-import { matchError } from '@ndulojs/core';
+import { matchError } from 'ndulojs';
 
 const message = matchError(result.error, {
   NOT_FOUND: (e) => `${e.resource} not found`,

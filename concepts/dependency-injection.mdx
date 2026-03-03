@@ -82,7 +82,7 @@ export type Scope = 'singleton' | 'scoped' | 'transient';
 ### Creating a container
 
 ```typescript
-import { createContainer } from '@ndulojs/core';
+import { createContainer } from 'ndulojs';
 
 const container = createContainer();
 // Container<{}> — empty registry
@@ -171,8 +171,8 @@ console.log(ctx1a === ctx2); // false — different scope, new instance
 
 <CodeGroup>
 ```typescript HTTP request scoping
-import { createContainer } from '@ndulojs/core';
-import type { IHttpAdapter, RequestContext } from '@ndulojs/core';
+import { createContainer } from 'ndulojs';
+import type { IHttpAdapter, RequestContext } from 'ndulojs';
 
 const container = createContainer()
   .register('Database', () => createDatabase())
@@ -301,7 +301,7 @@ Here's a complete setup for a user management module:
 import type { Database } from './database';
 import type { IUserRepository } from './modules/users/application/ports/user.port';
 import type { IUserService } from './modules/users/application/services/user.service';
-import type { LoggerSuite } from '@ndulojs/core';
+import type { LoggerSuite } from 'ndulojs';
 
 type AppRegistry = {
   Database: Database;
@@ -312,9 +312,9 @@ type AppRegistry = {
 ```
 
 ```typescript Container setup
-import { createContainer } from '@ndulojs/core';
+import { createContainer } from 'ndulojs';
 import { createDatabase } from './database';
-import { createLogger } from '@ndulojs/core';
+import { createLogger } from 'ndulojs';
 import { createUserRepository } from './modules/users/infrastructure/persistence/user.repository';
 import { createUserService } from './modules/users/application/services/user.service';
 
@@ -337,7 +337,7 @@ export type { AppRegistry };
 
 ```typescript Usage in routes
 import { container } from './container';
-import type { IHttpAdapter } from '@ndulojs/core';
+import type { IHttpAdapter } from 'ndulojs';
 
 export const registerRoutes = (app: IHttpAdapter) => {
   const userService = container.resolve('UserService');
@@ -359,8 +359,8 @@ DI makes testing trivial — swap real implementations for fakes:
 
 ```typescript user.service.test.ts
 import { describe, it, expect } from 'bun:test';
-import { createContainer } from '@ndulojs/core';
-import { Ok, Err, ErrorFactory } from '@ndulojs/core';
+import { createContainer } from 'ndulojs';
+import { Ok, Err, ErrorFactory } from 'ndulojs';
 import { createUserService } from './user.service';
 import type { IUserRepository } from '../ports/user.port';
 
